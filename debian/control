@@ -1,8 +1,9 @@
 Source: alembic
 Section: python
 Priority: optional
-Maintainer: Debian Python Team <team+python@tracker.debian.org>
-Uploaders:
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian Python Team <team+python@tracker.debian.org>
+XSBC-Pexip-Original-Uploaders:
  Thomas Goirand <zigo@debian.org>,
  Ondřej Nový <onovy@debian.org>,
 Build-Depends:
@@ -27,6 +28,7 @@ Vcs-Git: https://salsa.debian.org/python-team/packages/alembic.git
 Homepage: https://github.com/sqlalchemy/alembic
 Testsuite: autopkgtest-pkg-python
 Rules-Requires-Root: no
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ bookworm
 
 Package: alembic
 Architecture: all
