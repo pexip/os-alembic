@@ -6,13 +6,13 @@ export PYBUILD_BEFORE_TEST=cp {dir}/setup.cfg {build_dir}
 export PYBUILD_AFTER_TEST=rm {build_dir}/setup.cfg ; rm -rf {build_dir}/scratch ; rm -f {build_dir}/test_schema.db
 
 %:
-	dh $@ --with python3,sphinxdoc --buildsystem=pybuild
+	dh $@ --with python3 --buildsystem=pybuild
 
 override_dh_sphinxdoc:
 ifeq (,$(findstring nodocs, $(DEB_BUILD_OPTIONS)))
-	python3 -m sphinx -b html docs/build $(CURDIR)/debian/alembic/usr/share/doc/alembic/html
-	dh_sphinxdoc
-	rm $(CURDIR)/debian/alembic/usr/share/doc/alembic/html/_static/site_custom_css.css
+#	python3 -m sphinx -b html docs/build $(CURDIR)/debian/alembic/usr/share/doc/alembic/html
+#	dh_sphinxdoc
+#	rm $(CURDIR)/debian/alembic/usr/share/doc/alembic/html/_static/site_custom_css.css
 endif
 
 override_dh_auto_install:

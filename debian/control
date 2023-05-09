@@ -12,9 +12,6 @@ Build-Depends:
  python3-all,
  python3-changelog,
  python3-setuptools,
- python3-sphinx,
- python3-sphinx-copybutton,
- python3-sphinx-paramlinks,
 Build-Depends-Indep:
  python3-dateutil,
  python3-editor,
