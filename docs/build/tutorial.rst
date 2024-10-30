@@ -137,14 +137,13 @@ The file generated with the "generic" configuration looks like::
 
     # sys.path path, will be prepended to sys.path if present.
     # defaults to the current working directory.
-    # (new in 1.5.5)
     prepend_sys_path = .
 
     # timezone to use when rendering the date within the migration file
     # as well as the filename.
-    # If specified, requires the python-dateutil library that can be
-    # installed by adding `alembic[tz]` to the pip requirements
-    # string value is passed to dateutil.tz.gettz()
+    # If specified, requires the python>=3.9 or backports.zoneinfo library.
+    # Any required deps can installed by adding `alembic[tz]` to the pip requirements
+    # string value is passed to ZoneInfo()
     # leave blank for localtime
     # timezone =
 
@@ -177,6 +176,11 @@ The file generated with the "generic" configuration looks like::
     # version_path_separator = space
     version_path_separator = os  # Use os.pathsep. Default configuration used for new projects.
 
+    # set to 'true' to search source files recursively
+    # in each "version_locations" directory
+    # new in Alembic version 1.10
+    # recursive_version_locations = false
+
     # the output encoding used when revision files
     # are written from script.py.mako
     # output_encoding = utf-8
@@ -194,6 +198,12 @@ The file generated with the "generic" configuration looks like::
     # black.type = console_scripts
     # black.entrypoint = black
     # black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+    # lint with attempts to fix using "ruff" - use the exec runner, execute a binary
+    # hooks = ruff
+    # ruff.type = exec
+    # ruff.executable = %(here)s/.venv/bin/ruff
+    # ruff.options = --fix REVISION_SCRIPT_FILENAME
 
     # Logging configuration
     [loggers]
@@ -287,16 +297,18 @@ This file contains the following features:
 
 * ``timezone`` - an optional timezone name (e.g. ``UTC``, ``EST5EDT``, etc.)
   that will be applied to the timestamp which renders inside the migration
-  file's comment as well as within the filename. This option requires installing
-  the ``python-dateutil`` library. If ``timezone`` is specified,
+  file's comment as well as within the filename. This option requires Python>=3.9
+  or installing the ``backports.zoneinfo`` library. If ``timezone`` is specified,
   the create date object is no longer derived from ``datetime.datetime.now()``
   and is instead generated as::
 
       datetime.datetime.utcnow().replace(
-            tzinfo=dateutil.tz.tzutc()
-      ).astimezone(
-          dateutil.tz.gettz(<timezone>)
-      )
+        tzinfo=datetime.timezone.utc
+      ).astimezone(ZoneInfo(<timezone>))
+
+  .. versionchanged:: 1.13.0 Python standard library ``zoneinfo`` is now used
+     for timezone rendering in migrations; previously ``python-dateutil``
+     was used.
 
 * ``truncate_slug_length`` - defaults to 40, the max number of characters
   to include in the "slug" field.
@@ -331,6 +343,11 @@ This file contains the following features:
 * ``version_path_separator`` - a separator of ``version_locations`` paths.
   It should be defined if multiple ``version_locations`` is used.
   See :ref:`multiple_bases` for examples.
+
+* ``recursive_version_locations`` - when set to 'true', revision files
+  are searched recursively in each "version_locations" directory.
+
+  .. versionadded:: 1.10
 
 * ``output_encoding`` - the encoding to use when Alembic writes the
   ``script.py.mako`` file into a new migration file.  Defaults to ``'utf-8'``.

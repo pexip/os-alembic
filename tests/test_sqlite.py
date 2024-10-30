@@ -3,6 +3,7 @@ from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Float
 from sqlalchemy import func
+from sqlalchemy import Index
 from sqlalchemy import inspect
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
@@ -21,10 +22,12 @@ from alembic.testing import assert_raises_message
 from alembic.testing import config
 from alembic.testing import eq_
 from alembic.testing import eq_ignore_whitespace
+from alembic.testing.assertions import expect_warnings
 from alembic.testing.env import clear_staging_env
 from alembic.testing.env import staging_env
 from alembic.testing.fixtures import op_fixture
 from alembic.testing.fixtures import TestBase
+from alembic.testing.suite._autogen_fixtures import AutogenFixtureTest
 
 
 class SQLiteTest(TestBase):
@@ -61,7 +64,6 @@ class SQLiteTest(TestBase):
 
     @config.requirements.comments
     def test_create_table_with_comment_ignored(self):
-
         context = op_fixture("sqlite")
         op.create_table(
             "t2",
@@ -76,7 +78,6 @@ class SQLiteTest(TestBase):
 
     @config.requirements.comments
     def test_add_column_with_comment_ignored(self):
-
         context = op_fixture("sqlite")
         op.add_column("t1", Column("c1", Integer, comment="c1 comment"))
         context.assert_("ALTER TABLE t1 ADD COLUMN c1 INTEGER")
@@ -264,7 +265,6 @@ class SQLiteAutogenRenderTest(TestBase):
             "nullable=True)",
         )
 
-    @config.requirements.sqlalchemy_13
     def test_render_add_column_w_on_conflict(self):
         c = Column("int_value", Integer, sqlite_on_conflict_not_null="FAIL")
 
@@ -274,3 +274,70 @@ class SQLiteAutogenRenderTest(TestBase):
             "sa.Column('int_value', sa.Integer(), "
             "nullable=True, sqlite_on_conflict_not_null='FAIL')",
         )
+
+
+class SQLiteAutogenIndexTest(AutogenFixtureTest, TestBase):
+    __requires__ = ("indexes_with_expressions",)
+    __only_on__ = "sqlite"
+    __backend__ = True
+
+    def _functional_index_warn(self):
+        return (r"Skip.*refl",)
+
+    def test_functional_ix_one(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        t1 = Table(
+            "foo",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("email", String(50)),
+        )
+        Index("email_idx", func.lower(t1.c.email), unique=True)
+
+        t2 = Table(
+            "foo",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("email", String(50)),
+        )
+        Index("email_idx", func.lower(t2.c.email), unique=True)
+
+        with expect_warnings(*self._functional_index_warn()):
+            diffs = self._fixture(m1, m2)
+        eq_(diffs, [])
+
+    def test_functional_ix_two(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        t1 = Table(
+            "foo",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("email", String(50)),
+            Column("name", String(50)),
+        )
+        Index(
+            "email_idx",
+            func.coalesce(t1.c.email, t1.c.name).desc(),
+            unique=True,
+        )
+
+        t2 = Table(
+            "foo",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("email", String(50)),
+            Column("name", String(50)),
+        )
+        Index(
+            "email_idx",
+            func.coalesce(t2.c.email, t2.c.name).desc(),
+            unique=True,
+        )
+
+        with expect_warnings(*self._functional_index_warn()):
+            diffs = self._fixture(m1, m2)
+        eq_(diffs, [])

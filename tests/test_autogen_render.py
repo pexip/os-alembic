@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy import types
 from sqlalchemy import Unicode
 from sqlalchemy import UniqueConstraint
+from sqlalchemy import VARCHAR
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.sql import and_
 from sqlalchemy.sql import column
@@ -48,10 +49,10 @@ from alembic.testing import eq_ignore_whitespace
 from alembic.testing import mock
 from alembic.testing import TestBase
 from alembic.testing.fixtures import op_fixture
+from alembic.util import sqla_compat
 
 
 class AutogenRenderTest(TestBase):
-
     """test individual directives"""
 
     def setUp(self):
@@ -66,10 +67,7 @@ class AutogenRenderTest(TestBase):
 
         self.autogen_context = api.AutogenContext(context)
 
-    def test_render_add_index(self):
-        """
-        autogenerate.render._add_index
-        """
+    def table(self, *args, **kwargs):
         m = MetaData()
         t = Table(
             "test",
@@ -77,7 +75,16 @@ class AutogenRenderTest(TestBase):
             Column("id", Integer, primary_key=True),
             Column("active", Boolean()),
             Column("code", String(255)),
+            *args,
+            **kwargs,
         )
+        return t
+
+    def test_render_add_index(self):
+        """
+        autogenerate.render._add_index
+        """
+        t = self.table()
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -88,13 +95,7 @@ class AutogenRenderTest(TestBase):
 
     @testing.emits_warning("Can't validate argument ")
     def test_render_add_index_custom_kwarg(self):
-        t = Table(
-            "test",
-            MetaData(),
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index(None, t.c.active, t.c.code, somedialect_foobar="option")
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -107,14 +108,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_index
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         with self.autogen_context._within_batch():
@@ -128,15 +122,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_index using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -149,15 +135,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_index using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         with self.autogen_context._within_batch():
@@ -167,14 +145,26 @@ class AutogenRenderTest(TestBase):
                 "['active', 'code'], unique=False)",
             )
 
-    def test_render_add_index_func(self):
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("code", String(255)),
+    def test_render_add_index_text(self):
+        """
+        autogenerate.render._add_index
+        """
+        t = self.table()
+        idx = Index("test_active_code_idx", t.c.active, text("lower(code)"))
+        op_obj = ops.CreateIndexOp.from_index(idx)
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.create_index('test_active_code_idx', 'test', "
+            "['active', sa.text('lower(code)')], unique=False)",
         )
+        op_obj_rev = op_obj.reverse()
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj_rev),
+            "op.drop_index('test_active_code_idx', table_name='test')",
+        )
+
+    def test_render_add_index_func(self):
+        t = self.table()
         idx = Index("test_lower_code_idx", func.lower(t.c.code))
         op_obj = ops.CreateIndexOp.from_index(idx)
 
@@ -183,15 +173,14 @@ class AutogenRenderTest(TestBase):
             "op.create_index('test_lower_code_idx', 'test', "
             "[sa.text('lower(code)')], unique=False)",
         )
+        op_obj_rev = op_obj.reverse()
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj_rev),
+            "op.drop_index('test_lower_code_idx', table_name='test')",
+        )
 
     def test_render_add_index_cast(self):
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index("test_lower_code_idx", cast(t.c.code, String))
         op_obj = ops.CreateIndexOp.from_index(idx)
 
@@ -202,13 +191,7 @@ class AutogenRenderTest(TestBase):
         )
 
     def test_render_add_index_desc(self):
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index("test_desc_code_idx", t.c.code.desc())
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -221,14 +204,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_index
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -236,15 +212,45 @@ class AutogenRenderTest(TestBase):
             "op.drop_index('test_active_code_idx', table_name='test')",
         )
 
+    def test_drop_index_text(self):
+        """
+        autogenerate.render._drop_index
+        """
+        t = self.table()
+        idx = Index("test_active_code_idx", t.c.active, text("lower(code)"))
+        op_obj = ops.DropIndexOp.from_index(idx)
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.drop_index('test_active_code_idx', table_name='test')",
+        )
+        op_obj_rev = op_obj.reverse()
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj_rev),
+            "op.create_index('test_active_code_idx', 'test', "
+            "['active', sa.text('lower(code)')], unique=False)",
+        )
+
+    def test_drop_index_func(self):
+        """
+        autogenerate.render._drop_index
+        """
+        t = self.table()
+        idx = Index("test_lower_code_idx", func.lower(t.c.code))
+        op_obj = ops.DropIndexOp.from_index(idx)
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.drop_index('test_lower_code_idx', table_name='test')",
+        )
+        op_obj_rev = op_obj.reverse()
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj_rev),
+            "op.create_index('test_lower_code_idx', 'test', "
+            "[sa.text('lower(code)')], unique=False)",
+        )
+
     @testing.emits_warning("Can't validate argument ")
     def test_render_drop_index_custom_kwarg(self):
-        t = Table(
-            "test",
-            MetaData(),
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index(None, t.c.active, t.c.code, somedialect_foobar="option")
         op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -257,14 +263,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_index
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.DropIndexOp.from_index(idx)
         with self.autogen_context._within_batch():
@@ -277,15 +276,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_index using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -298,15 +289,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_index using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         idx = Index("test_active_code_idx", t.c.active, t.c.code)
         op_obj = ops.DropIndexOp.from_index(idx)
         with self.autogen_context._within_batch():
@@ -319,14 +302,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_unique_constraint
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.AddConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
@@ -338,14 +314,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_unique_constraint
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.AddConstraintOp.from_constraint(uq)
         with self.autogen_context._within_batch():
@@ -358,15 +327,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_unique_constraint using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.AddConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
@@ -379,15 +340,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._add_unique_constraint using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.AddConstraintOp.from_constraint(uq)
         with self.autogen_context._within_batch():
@@ -401,14 +354,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_constraint
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.DropConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
@@ -420,15 +366,7 @@ class AutogenRenderTest(TestBase):
         """
         autogenerate.render._drop_constraint using schema
         """
-        m = MetaData()
-        t = Table(
-            "test",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         uq = UniqueConstraint(t.c.code, name="uq_test_code")
         op_obj = ops.DropConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
@@ -542,12 +480,25 @@ class AutogenRenderTest(TestBase):
             "initially='XYZ')",
         )
 
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], match="FULL")
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'",
+                "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "match='FULL')",
+        )
+
         fk = ForeignKeyConstraint(
             [t1.c.c],
             [t2.c.c_rem],
             initially="XYZ",
             ondelete="CASCADE",
             deferrable=True,
+            match="FULL",
         )
         op_obj = ops.AddConstraintOp.from_constraint(fk)
         eq_ignore_whitespace(
@@ -557,7 +508,8 @@ class AutogenRenderTest(TestBase):
                 autogenerate.render_op_text(self.autogen_context, op_obj),
             ),
             "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
-            "ondelete='CASCADE', initially='XYZ', deferrable=True)",
+            "ondelete='CASCADE', initially='XYZ', deferrable=True, "
+            "match='FULL')",
         )
 
     def test_add_fk_constraint_inline_colkeys(self):
@@ -1125,7 +1077,6 @@ class AutogenRenderTest(TestBase):
             "server_default='5', nullable=True))",
         )
 
-    @config.requirements.sqlalchemy_13
     @testing.emits_warning("Can't validate argument ")
     def test_render_add_column_custom_kwarg(self):
         col = Column(
@@ -1142,7 +1093,7 @@ class AutogenRenderTest(TestBase):
 
     def test_render_add_column_system(self):
         # this would never actually happen since "system" columns
-        # can't be added in any case.   Howver it will render as
+        # can't be added in any case.   However it will render as
         # part of op.CreateTableOp.
         op_obj = ops.AddColumnOp("foo", Column("xmin", Integer, system=True))
         eq_ignore_whitespace(
@@ -1296,7 +1247,7 @@ class AutogenRenderTest(TestBase):
         )
         eq_(
             self.autogen_context.imports,
-            set(["from mypackage import MySpecialType"]),
+            {"from mypackage import MySpecialType"},
         )
 
     def test_render_modify_type(self):
@@ -1437,12 +1388,25 @@ class AutogenRenderTest(TestBase):
             "sa.ForeignKeyConstraint(['c'], ['t2.c_rem'], initially='XYZ')",
         )
 
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], match="FULL")
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'",
+                "'",
+                autogenerate.render._render_constraint(
+                    fk, self.autogen_context, m
+                ),
+            ),
+            "sa.ForeignKeyConstraint(['c'], ['t2.c_rem'], match='FULL')",
+        )
+
         fk = ForeignKeyConstraint(
             [t1.c.c],
             [t2.c.c_rem],
             initially="XYZ",
             ondelete="CASCADE",
             deferrable=True,
+            match="FULL",
         )
         eq_ignore_whitespace(
             re.sub(
@@ -1453,7 +1417,8 @@ class AutogenRenderTest(TestBase):
                 ),
             ),
             "sa.ForeignKeyConstraint(['c'], ['t2.c_rem'], "
-            "ondelete='CASCADE', initially='XYZ', deferrable=True)",
+            "ondelete='CASCADE', initially='XYZ', deferrable=True, "
+            "match='FULL')",
         )
 
     def test_render_fk_constraint_resolve_key(self):
@@ -1684,7 +1649,6 @@ class AutogenRenderTest(TestBase):
         )
 
     def test_generic_array_type(self):
-
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
                 types.ARRAY(Integer), self.autogen_context
@@ -1697,6 +1661,34 @@ class AutogenRenderTest(TestBase):
                 types.ARRAY(DateTime(timezone=True)), self.autogen_context
             ),
             "sa.ARRAY(sa.DateTime(timezone=True))",
+        )
+
+    @config.combinations(None, "default", "my_module.")
+    def test_render_create_table_with_user_module_type(self, mod):
+        class MyType(UserDefinedType):
+            def get_col_spec(self):
+                return "MYTYPE"
+
+        type_ = MyType()
+        uo = ops.UpgradeOps(
+            ops=[ops.CreateTableOp("sometable", [Column("x", type_)])]
+        )
+        if mod != "default":
+            kw = {"user_module_prefix": mod}
+        else:
+            kw = {}
+        if mod and mod != "default":
+            prefix = mod
+        else:
+            prefix = f"{__name__}."
+
+        eq_(
+            autogenerate.render_python_code(uo, **kw),
+            "# ### commands auto generated by Alembic - please adjust! ###\n"
+            "    op.create_table('sometable',\n"
+            f"    sa.Column('x', {prefix}MyType(), nullable=True)\n"
+            "    )\n"
+            "    # ### end Alembic commands ###",
         )
 
     def test_render_array_no_context(self):
@@ -1757,24 +1749,41 @@ class AutogenRenderTest(TestBase):
             "    # ### end Alembic commands ###",
         )
 
-    def test_repr_custom_type_w_sqla_prefix(self):
+    @testing.combinations("sqlaname", "nonsqlaname", argnames="modname")
+    @testing.combinations("usevariant", "plain", argnames="construct")
+    def test_repr_custom_type(self, modname, construct):
+        """test #1167 as well as other user defined type variations"""
+
         self.autogen_context.opts["user_module_prefix"] = None
 
         class MyType(UserDefinedType):
             pass
 
-        MyType.__module__ = "sqlalchemy_util.types"
+        if modname == "sqlaname":
+            MyType.__module__ = mod = "sqlalchemy_util.types"
+        elif modname == "nonsqlaname":
+            MyType.__module__ = mod = "mymodule"
+        else:
+            assert False
 
-        type_ = MyType()
+        if construct == "usevariant":
+            type_ = MyType().with_variant(String(), "mysql")
+        elif construct == "plain":
+            type_ = MyType()
+        else:
+            assert False
 
         eq_ignore_whitespace(
             autogenerate.render._repr_type(type_, self.autogen_context),
-            "sqlalchemy_util.types.MyType()",
+            f"{mod}.MyType()"
+            + (
+                ".with_variant(sa.String(), 'mysql')"
+                if construct == "usevariant"
+                else ""
+            ),
         )
 
     def test_render_variant(self):
-        from sqlalchemy import VARCHAR, CHAR
-
         self.autogen_context.opts["user_module_prefix"] = None
 
         type_ = (
@@ -1805,8 +1814,6 @@ class AutogenRenderTest(TestBase):
         )
 
     def test_repr_user_type_user_prefix_present(self):
-        from sqlalchemy.types import UserDefinedType
-
         class MyType(UserDefinedType):
             def get_col_spec(self):
                 return "MYTYPE"
@@ -1833,7 +1840,7 @@ class AutogenRenderTest(TestBase):
         )
         eq_(
             self.autogen_context.imports,
-            set(["from sqlalchemy.dialects import mysql"]),
+            {"from sqlalchemy.dialects import mysql"},
         )
 
     def test_render_server_default_text(self):
@@ -1975,6 +1982,27 @@ class AutogenRenderTest(TestBase):
             ")",
         )
 
+    def test_render_table_with_info(self):
+        m = MetaData()
+        t = Table(
+            "test",
+            m,
+            Column("id", Integer, primary_key=True),
+            Column("q", Integer, ForeignKey("address.id")),
+            info={"oracle_partition": "PARTITION BY ..."},
+        )
+        op_obj = ops.CreateTableOp.from_table(t)
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.create_table('test',"
+            "sa.Column('id', sa.Integer(), nullable=False),"
+            "sa.Column('q', sa.Integer(), nullable=True),"
+            "sa.ForeignKeyConstraint(['q'], ['address.id'], ),"
+            "sa.PrimaryKeyConstraint('id'),"
+            "info={'oracle_partition': 'PARTITION BY ...'}"
+            ")",
+        )
+
     def test_render_add_column_with_comment(self):
         op_obj = ops.AddColumnOp(
             "foo", Column("x", Integer, comment="This is a Column")
@@ -2041,6 +2069,38 @@ class AutogenRenderTest(TestBase):
             ")",
         )
 
+    @testing.combinations((True,), (False,), argnames="use_schema")
+    def test_render_create_table_comment_op_batch(self, use_schema):
+        """test #1361"""
+        uo = ops.UpgradeOps(
+            ops=[
+                ops.ModifyTableOps(
+                    "table_name",
+                    schema="SomeSchema" if use_schema else None,
+                    ops=[
+                        ops.CreateTableCommentOp(
+                            "table_name",
+                            "comment",
+                            schema="SomeSchema" if use_schema else None,
+                        )
+                    ],
+                )
+            ]
+        )
+
+        eq_(
+            autogenerate.render_python_code(uo, render_as_batch=True),
+            "# ### commands auto generated by Alembic - please adjust! ###\n"
+            "    with op.batch_alter_table('table_name', "
+            f"schema={repr('SomeSchema' if use_schema else None)}) "
+            "as batch_op:\n"
+            "        batch_op.create_table_comment(\n"
+            "        'comment',\n"
+            "        existing_comment=None\n"
+            "    )\n\n"
+            "    # ### end Alembic commands ###",
+        )
+
     def test_render_drop_table_comment_op(self):
         op_obj = ops.DropTableCommentOp("table_name")
         eq_ignore_whitespace(
@@ -2050,6 +2110,36 @@ class AutogenRenderTest(TestBase):
             "   existing_comment=None,"
             "   schema=None"
             ")",
+        )
+
+    @testing.combinations((True,), (False,), argnames="use_schema")
+    def test_render_drop_table_comment_op_batch(self, use_schema):
+        """test #1361"""
+        uo = ops.UpgradeOps(
+            ops=[
+                ops.ModifyTableOps(
+                    "table_name",
+                    schema="SomeSchema" if use_schema else None,
+                    ops=[
+                        ops.DropTableCommentOp(
+                            "table_name",
+                            schema="SomeSchema" if use_schema else None,
+                        )
+                    ],
+                )
+            ]
+        )
+
+        eq_(
+            autogenerate.render_python_code(uo, render_as_batch=True),
+            "# ### commands auto generated by Alembic - please adjust! ###\n"
+            "    with op.batch_alter_table('table_name', "
+            f"schema={repr('SomeSchema' if use_schema else None)}) "
+            "as batch_op:\n"
+            "        batch_op.drop_table_comment(\n"
+            "        existing_comment=None\n"
+            "    )\n\n"
+            "    # ### end Alembic commands ###",
         )
 
     def test_render_drop_table_comment_op_existing_with_quote(self):
@@ -2113,7 +2203,7 @@ class AutogenRenderTest(TestBase):
 
     @config.requirements.computed_columns_api
     @testing.combinations((True,), (False,))
-    def test_render_alter_column_computed_modify_default_perisisted(
+    def test_render_alter_column_computed_modify_default_persisted(
         self, persisted
     ):
         op_obj = ops.AlterColumnOp(
@@ -2129,7 +2219,7 @@ class AutogenRenderTest(TestBase):
 
     @config.requirements.computed_columns_api
     @testing.combinations((True,), (False,))
-    def test_render_alter_column_computed_existing_default_perisisted(
+    def test_render_alter_column_computed_existing_default_persisted(
         self, persisted
     ):
         c = sa.Computed("42", persisted=persisted)
@@ -2143,15 +2233,13 @@ class AutogenRenderTest(TestBase):
             % persisted,
         )
 
-    @config.requirements.identity_columns_api
-    @testing.combinations(
+    identity_comb = testing.combinations(
         ({}, "sa.Identity(always=False)"),
         (dict(always=None), "sa.Identity(always=None)"),
         (dict(always=True), "sa.Identity(always=True)"),
         (
             dict(
                 always=False,
-                on_null=True,
                 start=2,
                 increment=4,
                 minvalue=-3,
@@ -2160,13 +2248,30 @@ class AutogenRenderTest(TestBase):
                 nomaxvalue=True,
                 cycle=True,
                 cache=42,
-                order=True,
             ),
-            "sa.Identity(always=False, on_null=True, start=2, increment=4, "
+            "sa.Identity(always=False, start=2, increment=4, "
             "minvalue=-3, maxvalue=99, nominvalue=True, nomaxvalue=True, "
-            "cycle=True, cache=42, order=True)",
+            "cycle=True, cache=42)",
+        ),
+        (
+            dict(start=42, oracle_on_null=True, oracle_order=False),
+            "sa.Identity(always=False, start=42, oracle_on_null=True, "
+            "oracle_order=False)",
+            testing.exclusions.only_if(
+                lambda: sqla_compat.identity_has_dialect_kwargs
+            ),
+        ),
+        (
+            dict(start=42, on_null=True, order=False),
+            "sa.Identity(always=False, on_null=True, start=42, order=False)",
+            testing.exclusions.only_if(
+                lambda: not sqla_compat.identity_has_dialect_kwargs
+            ),
         ),
     )
+
+    @config.requirements.identity_columns_api
+    @identity_comb
     def test_render_add_column_identity(self, kw, text):
         col = Column("x", Integer, sa.Identity(**kw))
         op_obj = ops.AddColumnOp("foo", col)
@@ -2177,29 +2282,7 @@ class AutogenRenderTest(TestBase):
         )
 
     @config.requirements.identity_columns_api
-    @testing.combinations(
-        ({}, "sa.Identity(always=False)"),
-        (dict(always=None), "sa.Identity(always=None)"),
-        (dict(always=True), "sa.Identity(always=True)"),
-        (
-            dict(
-                always=False,
-                on_null=True,
-                start=2,
-                increment=4,
-                minvalue=-3,
-                maxvalue=99,
-                nominvalue=True,
-                nomaxvalue=True,
-                cycle=True,
-                cache=42,
-                order=True,
-            ),
-            "sa.Identity(always=False, on_null=True, start=2, increment=4, "
-            "minvalue=-3, maxvalue=99, nominvalue=True, nomaxvalue=True, "
-            "cycle=True, cache=42, order=True)",
-        ),
-    )
+    @identity_comb
     def test_render_alter_column_add_identity(self, kw, text):
         op_obj = ops.AlterColumnOp(
             "foo",
@@ -2232,7 +2315,6 @@ class AutogenRenderTest(TestBase):
 
 class RenderNamingConventionTest(TestBase):
     def setUp(self):
-
         convention = {
             "ix": "ix_%(custom)s_%(column_0_label)s",
             "uq": "uq_%(custom)s_%(table_name)s_%(column_0_name)s",
@@ -2285,14 +2367,20 @@ class RenderNamingConventionTest(TestBase):
             "sa.UniqueConstraint('c', name='q')",
         )
 
-    def test_render_add_index(self):
+    def table(self, *args, **kwargs):
         t = Table(
             "test",
             self.metadata,
             Column("id", Integer, primary_key=True),
             Column("active", Boolean()),
             Column("code", String(255)),
+            *args,
+            **kwargs,
         )
+        return t
+
+    def test_render_add_index(self):
+        t = self.table()
         idx = Index(None, t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -2302,13 +2390,7 @@ class RenderNamingConventionTest(TestBase):
         )
 
     def test_render_drop_index(self):
-        t = Table(
-            "test",
-            self.metadata,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-        )
+        t = self.table()
         idx = Index(None, t.c.active, t.c.code)
         op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
@@ -2317,14 +2399,7 @@ class RenderNamingConventionTest(TestBase):
         )
 
     def test_render_add_index_schema(self):
-        t = Table(
-            "test",
-            self.metadata,
-            Column("id", Integer, primary_key=True),
-            Column("active", Boolean()),
-            Column("code", String(255)),
-            schema="CamelSchema",
-        )
+        t = self.table(schema="CamelSchema")
         idx = Index(None, t.c.active, t.c.code)
         op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
