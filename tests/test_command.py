@@ -9,11 +9,14 @@ from typing import cast
 
 from sqlalchemy import exc as sqla_exc
 from sqlalchemy import text
+from sqlalchemy import VARCHAR
 from sqlalchemy.engine import Engine
+from sqlalchemy.sql.schema import Column
 
 from alembic import __version__
 from alembic import command
 from alembic import config
+from alembic import testing
 from alembic import util
 from alembic.script import ScriptDirectory
 from alembic.testing import assert_raises
@@ -23,6 +26,7 @@ from alembic.testing import is_false
 from alembic.testing import is_true
 from alembic.testing import mock
 from alembic.testing.env import _get_staging_directory
+from alembic.testing.env import _multidb_testing_config
 from alembic.testing.env import _no_sql_testing_config
 from alembic.testing.env import _sqlite_file_db
 from alembic.testing.env import _sqlite_testing_config
@@ -60,7 +64,7 @@ class HistoryTest(_BufMixin, TestBase):
     def teardown_class(cls):
         clear_staging_env()
 
-    def teardown(self):
+    def tearDown(self):
         self.cfg.set_main_option("revision_environment", "false")
 
     @classmethod
@@ -201,6 +205,73 @@ finally:
         )
 
 
+class RevisionEnvironmentTest(_BufMixin, TestBase):
+    def setUp(self):
+        self.env = staging_env()
+        self.cfg = _sqlite_testing_config()
+        self._setup_env_file()
+
+    def tearDown(self):
+        self.cfg.set_main_option("revision_environment", "false")
+        clear_staging_env()
+
+    @classmethod
+    def _setup_env_file(self):
+        env_file_fixture(
+            r"""
+
+from sqlalchemy import MetaData, engine_from_config
+target_metadata = MetaData()
+
+engine = engine_from_config(
+    config.get_section(config.config_ini_section),
+    prefix='sqlalchemy.')
+
+connection = engine.connect()
+
+context.configure(
+    connection=connection, target_metadata=target_metadata
+)
+
+try:
+    with context.begin_transaction():
+        config.stdout.write(u"environment included OK\n")
+        context.run_migrations()
+finally:
+    connection.close()
+    engine.dispose()
+"""
+        )
+
+    def _assert_env_token(self, buf, expected):
+        if expected:
+            assert "environment included OK" in buf.getvalue().decode(
+                "ascii", "replace"
+            )
+        else:
+            assert "environment included OK" not in buf.getvalue().decode(
+                "ascii", "replace"
+            )
+
+    @testing.combinations(True, False, argnames="rev_env")
+    def test_merge_cmd_revision_environment(self, rev_env):
+        if rev_env:
+            self.cfg.set_main_option("revision_environment", "true")
+        self.cfg.stdout = buf = self._buf_fixture()
+        cfg = self.cfg
+        self.a, self.b, self.c = three_rev_fixture(cfg)
+        self.d, self.e, self.f = multi_heads_fixture(
+            cfg, self.a, self.b, self.c
+        )
+        command.merge(self.cfg, "heads", rev_id="merge_revision")
+        self._assert_env_token(buf, rev_env)
+        rev = ScriptDirectory.from_config(self.cfg).get_revision(
+            "merge_revision"
+        )
+
+        assert os.path.exists(rev.path)
+
+
 class CurrentTest(_BufMixin, TestBase):
     @classmethod
     def setup_class(cls):
@@ -224,15 +295,13 @@ class CurrentTest(_BufMixin, TestBase):
 
         yield
 
-        lines = set(
-            [
-                re.match(r"(^.\w)", elem).group(1)
-                for elem in re.split(
-                    "\n", buf.getvalue().decode("ascii", "replace").strip()
-                )
-                if elem
-            ]
-        )
+        lines = {
+            re.match(r"(^.\w)", elem).group(1)
+            for elem in re.split(
+                "\n", buf.getvalue().decode("ascii", "replace").strip()
+            )
+            if elem
+        }
 
         eq_(lines, set(revs))
 
@@ -252,12 +321,6 @@ class CurrentTest(_BufMixin, TestBase):
         command.stamp(self.cfg, self.a3.revision)
         with self._assert_lines(["a3"]):
             command.current(self.cfg)
-
-    def test_current_obfuscate_password(self):
-        eq_(
-            util.obfuscate_url_pw("postgresql://scott:tiger@localhost/test"),
-            "postgresql://scott:XXXXX@localhost/test",
-        )
 
     def test_two_heads(self):
         command.stamp(self.cfg, ())
@@ -537,6 +600,110 @@ finally:
         self._env_fixture()
         self.cfg.set_main_option("revision_environment", "true")
         command.revision(self.cfg, sql=True)
+
+
+class CheckTest(TestBase):
+    def setUp(self):
+        self.env = staging_env()
+        self.cfg = _sqlite_testing_config()
+
+    def tearDown(self):
+        clear_staging_env()
+
+    def _env_fixture(self, version_table_pk=True):
+        env_file_fixture(
+            """
+
+from sqlalchemy import MetaData, engine_from_config
+target_metadata = MetaData()
+
+engine = engine_from_config(
+    config.get_section(config.config_ini_section),
+    prefix='sqlalchemy.')
+
+connection = engine.connect()
+
+context.configure(
+    connection=connection, target_metadata=target_metadata,
+    version_table_pk=%r
+)
+
+try:
+    with context.begin_transaction():
+        context.run_migrations()
+finally:
+    connection.close()
+    engine.dispose()
+
+"""
+            % (version_table_pk,)
+        )
+
+    def test_check_no_changes(self):
+        self._env_fixture()
+        command.check(self.cfg)  # no problem
+
+    def test_check_changes_detected(self):
+        self._env_fixture()
+        with mock.patch(
+            "alembic.operations.ops.UpgradeOps.as_diffs",
+            return_value=[
+                ("remove_column", None, "foo", Column("old_data", VARCHAR()))
+            ],
+        ):
+            assert_raises_message(
+                util.AutogenerateDiffsDetected,
+                r"New upgrade operations detected: \[\('remove_column'",
+                command.check,
+                self.cfg,
+            )
+
+
+class CheckTestMultiDB(CheckTest):
+    def setUp(self):
+        self.engine1 = _sqlite_file_db(tempname="eng1.db")
+        self.engine2 = _sqlite_file_db(tempname="eng2.db")
+        self.engine3 = _sqlite_file_db(tempname="eng3.db")
+
+        self.env = staging_env(template="multidb")
+        self.cfg = _multidb_testing_config(
+            {
+                "engine1": self.engine1,
+                "engine2": self.engine2,
+                "engine3": self.engine3,
+            }
+        )
+
+    def _env_fixture(self):
+        env_file_fixture(
+            """
+
+import re
+from sqlalchemy import MetaData, engine_from_config
+
+db_names = config.get_main_option("databases", "")
+for db_name in re.split(r",\\s*", db_names):
+    engine = engine_from_config(
+        config.get_section(db_name),
+        prefix="sqlalchemy.",
+    )
+    connection = engine.connect()
+    metadata = MetaData()
+    context.configure(
+        connection=connection,
+        target_metadata=metadata,
+    )
+
+    try:
+        with context.begin_transaction():
+            context.run_migrations()
+    finally:
+        connection.close()
+        engine.dispose()
+
+
+"""
+        )
 
 
 class _StampTest:
@@ -976,7 +1143,7 @@ class CommandLineTest(TestBase):
         cls.cfg = _sqlite_testing_config()
         cls.a, cls.b, cls.c = three_rev_fixture(cls.cfg)
 
-    def teardown(self):
+    def tearDown(self):
         os.environ.pop("ALEMBIC_CONFIG", None)
 
     @classmethod
@@ -1153,7 +1320,6 @@ class CommandLineTest(TestBase):
             )
 
     def test_init_w_package(self):
-
         path = os.path.join(_get_staging_directory(), "foobar")
 
         with mock.patch("alembic.command.open") as open_:
@@ -1164,14 +1330,16 @@ class CommandLineTest(TestBase):
                     mock.call(
                         os.path.abspath(os.path.join(path, "__init__.py")), "w"
                     ),
-                    mock.call().close(),
+                    mock.call().__enter__(),
+                    mock.call().__exit__(None, None, None),
                     mock.call(
                         os.path.abspath(
                             os.path.join(path, "versions", "__init__.py")
                         ),
                         "w",
                     ),
-                    mock.call().close(),
+                    mock.call().__enter__(),
+                    mock.call().__exit__(None, None, None),
                 ],
             )
 

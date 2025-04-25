@@ -1,5 +1,8 @@
 """Test against the builders in the op.* module."""
 
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 from sqlalchemy import Boolean
 from sqlalchemy import CheckConstraint
 from sqlalchemy import Column
@@ -14,10 +17,13 @@ from sqlalchemy import Table
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.sql import column
 from sqlalchemy.sql import func
+from sqlalchemy.sql import table
 from sqlalchemy.sql import text
 from sqlalchemy.sql.schema import quoted_name
 
 from alembic import op
+from alembic.operations import MigrateOperation
+from alembic.operations import Operations
 from alembic.operations import ops
 from alembic.operations import schemaobj
 from alembic.testing import assert_raises_message
@@ -27,6 +33,7 @@ from alembic.testing import eq_
 from alembic.testing import expect_warnings
 from alembic.testing import is_not_
 from alembic.testing import mock
+from alembic.testing.assertions import expect_raises_message
 from alembic.testing.fixtures import op_fixture
 from alembic.testing.fixtures import TestBase
 from alembic.util import sqla_compat
@@ -49,7 +56,6 @@ class OpTest(TestBase):
         context.assert_("CREATE INDEX name ON tname (foo(x))")
 
     def test_add_column_schema_hard_quoting(self):
-
         context = op_fixture("postgresql")
         op.add_column(
             "somename",
@@ -62,7 +68,6 @@ class OpTest(TestBase):
         )
 
     def test_rename_table_schema_hard_quoting(self):
-
         context = op_fixture("postgresql")
         op.rename_table(
             "t1", "t2", schema=quoted_name("some.schema", quote=True)
@@ -71,7 +76,6 @@ class OpTest(TestBase):
         context.assert_('ALTER TABLE "some.schema".t1 RENAME TO t2')
 
     def test_add_constraint_schema_hard_quoting(self):
-
         context = op_fixture("postgresql")
         op.create_check_constraint(
             "ck_user_name_len",
@@ -726,6 +730,21 @@ class OpTest(TestBase):
             "FOREIGN KEY(foo) REFERENCES t1 (bar)"
         )
 
+    def test_add_foreign_key_composite_self_referential(self):
+        """test #1215
+
+        the same column name is present on both sides.
+
+        """
+        context = op_fixture()
+        op.create_foreign_key(
+            "fk_test", "t1", "t1", ["foo", "bar"], ["bat", "bar"]
+        )
+        context.assert_(
+            "ALTER TABLE t1 ADD CONSTRAINT fk_test "
+            "FOREIGN KEY(foo, bar) REFERENCES t1 (bat, bar)"
+        )
+
     def test_add_primary_key_constraint(self):
         context = op_fixture()
         op.create_primary_key("pk_test", "t1", ["foo", "bar"])
@@ -784,6 +803,22 @@ class OpTest(TestBase):
         op.drop_constraint("foo_bar_bat", "t1")
         context.assert_("ALTER TABLE t1 DROP CONSTRAINT foo_bar_bat")
 
+    def test_drop_constraint_type(self):
+        context = op_fixture()
+        op.drop_constraint("foo_bar_bat", "t1", type_="foreignkey")
+        context.assert_("ALTER TABLE t1 DROP CONSTRAINT foo_bar_bat")
+
+    def test_drop_constraint_type_generic(self):
+        context = op_fixture()
+        op.drop_constraint("foo_bar_bat", "t1")
+        context.assert_("ALTER TABLE t1 DROP CONSTRAINT foo_bar_bat")
+
+    def test_drop_constraint_legacy_type(self):
+        """#1245"""
+        context = op_fixture()
+        op.drop_constraint("foo_bar_bat", "t1", "foreignkey")
+        context.assert_("ALTER TABLE t1 DROP CONSTRAINT foo_bar_bat")
+
     def test_drop_constraint_schema(self):
         context = op_fixture()
         op.drop_constraint("foo_bar_bat", "t1", schema="foo")
@@ -793,6 +828,12 @@ class OpTest(TestBase):
         context = op_fixture()
         op.create_index("ik_test", "t1", ["foo", "bar"])
         context.assert_("CREATE INDEX ik_test ON t1 (foo, bar)")
+
+    @config.requirements.sqlalchemy_14
+    def test_create_index_if_not_exists(self):
+        context = op_fixture()
+        op.create_index("ik_test", "t1", ["foo", "bar"], if_not_exists=True)
+        context.assert_("CREATE INDEX IF NOT EXISTS ik_test ON t1 (foo, bar)")
 
     def test_create_unique_index(self):
         context = op_fixture()
@@ -834,10 +875,27 @@ class OpTest(TestBase):
         op.drop_index("ik_test")
         context.assert_("DROP INDEX ik_test")
 
+    def test_drop_index_w_tablename(self):
+        context = op_fixture()
+        op.drop_index("ik_test", table_name="the_table")
+        context.assert_("DROP INDEX ik_test")
+
+    def test_drop_index_w_tablename_legacy(self):
+        """#1243"""
+        context = op_fixture()
+        op.drop_index("ik_test", "the_table")
+        context.assert_("DROP INDEX ik_test")
+
     def test_drop_index_schema(self):
         context = op_fixture()
         op.drop_index("ik_test", schema="foo")
         context.assert_("DROP INDEX foo.ik_test")
+
+    @config.requirements.sqlalchemy_14
+    def test_drop_index_if_exists(self):
+        context = op_fixture()
+        op.drop_index("ik_test", if_exists=True)
+        context.assert_("DROP INDEX IF EXISTS ik_test")
 
     def test_drop_table(self):
         context = op_fixture()
@@ -1021,10 +1079,57 @@ class OpTest(TestBase):
             "FOREIGN KEY(foo_bar) REFERENCES foo (bar))"
         )
 
+    def test_execute_delete(self):
+        context = op_fixture()
+
+        account = table(
+            "account", column("name", String), column("id", Integer)
+        )
+        op.execute(account.delete().where(account.c.name == "account 1"))
+        context.assert_(
+            "DELETE FROM account WHERE account.name = :name_1",
+        )
+
+    def test_execute_insert(self):
+        context = op_fixture()
+
+        account = table(
+            "account", column("name", String), column("id", Integer)
+        )
+        op.execute(account.insert().values(name="account 1"))
+        context.assert_(
+            "INSERT INTO account (name) VALUES (:name)",
+        )
+
+    def test_execute_update(self):
+        context = op_fixture()
+
+        account = table(
+            "account", column("name", String), column("id", Integer)
+        )
+        op.execute(
+            account.update()
+            .where(account.c.name == "account 1")
+            .values({"name": "account 2"})
+        )
+        context.assert_(
+            "UPDATE account SET name=:name " "WHERE account.name = :name_1",
+        )
+
+    def test_execute_str(self):
+        context = op_fixture()
+
+        op.execute("SELECT 'test'")
+        context.assert_("SELECT 'test'")
+
+    def test_execute_textclause(self):
+        context = op_fixture()
+
+        op.execute(text("SELECT 'test'"))
+        context.assert_("SELECT 'test'")
+
     def test_inline_literal(self):
         context = op_fixture()
-        from sqlalchemy.sql import table, column
-        from sqlalchemy import String, Integer
 
         account = table(
             "account", column("name", String), column("id", Integer)
@@ -1140,12 +1245,50 @@ class OpTest(TestBase):
             ("after_drop", "tb_test"),
         ]
 
+    @config.requirements.sqlalchemy_14
+    def test_run_async_error(self):
+        op_fixture()
+
+        async def go(conn):
+            pass
+
+        with expect_raises_message(
+            NotImplementedError, "SQLAlchemy 1.4.18. required"
+        ):
+            with patch.object(sqla_compat, "sqla_14_18", False):
+                op.run_async(go)
+        with expect_raises_message(
+            NotImplementedError, "Cannot call run_async in SQL mode"
+        ):
+            with patch.object(op._proxy, "get_bind", lambda: None):
+                op.run_async(go)
+        with expect_raises_message(
+            ValueError, "Cannot call run_async with a sync engine"
+        ):
+            op.run_async(go)
+
+    @config.requirements.asyncio
+    def test_run_async_ok(self):
+        from sqlalchemy.ext.asyncio import AsyncConnection
+
+        op_fixture()
+        conn = op.get_bind()
+        mock_conn = MagicMock()
+        mock_fn = MagicMock()
+        with patch.object(conn.dialect, "is_async", True), patch.object(
+            AsyncConnection, "_retrieve_proxy_for_target", mock_conn
+        ), patch("sqlalchemy.util.await_only") as mock_await:
+            res = op.run_async(mock_fn, 99, foo=42)
+
+            eq_(res, mock_await.return_value)
+            mock_conn.assert_called_once_with(conn)
+            mock_await.assert_called_once_with(mock_fn.return_value)
+            mock_fn.assert_called_once_with(mock_conn.return_value, 99, foo=42)
+
 
 class SQLModeOpTest(TestBase):
     def test_auto_literals(self):
         context = op_fixture(as_sql=True, literal_binds=True)
-        from sqlalchemy.sql import table, column
-        from sqlalchemy import String, Integer
 
         account = table(
             "account", column("name", String), column("id", Integer)
@@ -1179,8 +1322,6 @@ class SQLModeOpTest(TestBase):
 
 class CustomOpTest(TestBase):
     def test_custom_op(self):
-        from alembic.operations import Operations, MigrateOperation
-
         @Operations.register_operation("create_sequence")
         class CreateSequenceOp(MigrateOperation):
             """Create a SEQUENCE."""
@@ -1213,7 +1354,7 @@ class ObjectFromToTest(TestBase):
 
     As of #803 the constructs try to behave more intelligently
     about the state they were given, so that they can both "reverse"
-    themselves but also take into accout their current state.
+    themselves but also take into account their current state.
 
     """
 

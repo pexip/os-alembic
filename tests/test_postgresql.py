@@ -1,3 +1,5 @@
+import itertools
+
 from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import Column
@@ -19,17 +21,21 @@ from sqlalchemy import types
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.dialects.postgresql import HSTORE
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import TSRANGE
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import column
 from sqlalchemy.sql import false
 from sqlalchemy.sql import table
+from sqlalchemy.sql.expression import literal_column
 
 from alembic import autogenerate
 from alembic import command
 from alembic import op
+from alembic import testing
 from alembic import util
 from alembic.autogenerate import api
 from alembic.autogenerate.compare import _compare_server_default
@@ -39,12 +45,14 @@ from alembic.migration import MigrationContext
 from alembic.operations import ops
 from alembic.script import ScriptDirectory
 from alembic.testing import assert_raises_message
-from alembic.testing import assertions
 from alembic.testing import combinations
 from alembic.testing import config
 from alembic.testing import eq_
 from alembic.testing import eq_ignore_whitespace
 from alembic.testing import provide_metadata
+from alembic.testing import resolve_lambda
+from alembic.testing import schemacompare
+from alembic.testing.assertions import expect_warnings
 from alembic.testing.env import _no_sql_testing_config
 from alembic.testing.env import clear_staging_env
 from alembic.testing.env import staging_env
@@ -120,10 +128,30 @@ class PostgresqlOpTest(TestBase):
         op.create_index("i", "t", ["c1", "c2"], unique=False)
         context.assert_("CREATE INDEX i ON t (c1, c2)")
 
-    def test_drop_index_postgresql_concurrently(self):
+    @config.requirements.sqlalchemy_14
+    def test_create_index_postgresql_if_not_exists(self):
         context = op_fixture("postgresql")
-        op.drop_index("geocoded", "locations", postgresql_concurrently=True)
+        op.create_index("i", "t", ["c1", "c2"], if_not_exists=True)
+        context.assert_("CREATE INDEX IF NOT EXISTS i ON t (c1, c2)")
+
+    @config.combinations("include_table", "no_table", argnames="include_table")
+    def test_drop_index_postgresql_concurrently(self, include_table):
+        context = op_fixture("postgresql")
+        if include_table == "include_table":
+            op.drop_index(
+                "geocoded",
+                table_name="locations",
+                postgresql_concurrently=True,
+            )
+        else:
+            op.drop_index("geocoded", postgresql_concurrently=True)
         context.assert_("DROP INDEX CONCURRENTLY geocoded")
+
+    @config.requirements.sqlalchemy_14
+    def test_drop_index_postgresql_if_exists(self):
+        context = op_fixture("postgresql")
+        op.drop_index("geocoded", if_exists=True)
+        context.assert_("DROP INDEX IF EXISTS geocoded")
 
     def test_alter_column_type_using(self):
         context = op_fixture("postgresql")
@@ -146,6 +174,11 @@ class PostgresqlOpTest(TestBase):
             "ALTER TABLE t1 ADD CONSTRAINT ex1 EXCLUDE USING gist (x WITH >) "
             "WHERE (x > 5)"
         )
+
+    def test_drop_exclude_or_other_constraint(self):
+        context = op_fixture("postgresql")
+        op.drop_constraint("t_excl_x", "TTable", type_=None)
+        context.assert_('ALTER TABLE "TTable" DROP CONSTRAINT t_excl_x')
 
     def test_create_exclude_constraint_quoted_literal(self):
         context = op_fixture("postgresql")
@@ -417,7 +450,7 @@ class PostgresqlOpTest(TestBase):
                 maxvalue=9999,
                 minvalue=0,
             ),
-            dict(always=False, start=3, order=True, on_null=False, cache=2),
+            dict(always=False, start=3, cache=2),
             "SET CACHE 2",
         ),
         (
@@ -770,7 +803,7 @@ class PostgresqlDefaultCompareTest(TestBase):
     def test_compare_unicode_literal(self):
         self._compare_default_roundtrip(String(), "im a default")
 
-    # TOOD: will need to actually eval() the repr() and
+    # TODO: will need to actually eval() the repr() and
     # spend more effort figuring out exactly the kind of expression
     # to use
     def _TODO_test_compare_character_str_w_singlequote(self):
@@ -826,8 +859,8 @@ class PostgresqlDetectSerialTest(TestBase):
         clear_staging_env()
 
     @provide_metadata
-    def _expect_default(self, c_expected, col, seq=None):
-        Table("t", self.metadata, col)
+    def _expect_default(self, c_expected, col, schema=None, seq=None):
+        Table("t", self.metadata, col, schema=schema)
 
         self.autogen_context.metadata = self.metadata
 
@@ -838,27 +871,25 @@ class PostgresqlDetectSerialTest(TestBase):
         insp = inspect(config.db)
 
         uo = ops.UpgradeOps(ops=[])
-        _compare_tables(
-            set([(None, "t")]), set([]), insp, uo, self.autogen_context
-        )
+        _compare_tables({(schema, "t")}, set(), insp, uo, self.autogen_context)
         diffs = uo.as_diffs()
         tab = diffs[0][1]
 
         eq_(
             _render_server_default_for_compare(
-                tab.c.x.server_default, tab.c.x, self.autogen_context
+                tab.c.x.server_default, self.autogen_context
             ),
             c_expected,
         )
 
         insp = inspect(config.db)
         uo = ops.UpgradeOps(ops=[])
-        m2 = MetaData()
+        m2 = MetaData(schema=schema)
         Table("t", m2, Column("x", BigInteger()))
         self.autogen_context.metadata = m2
         _compare_tables(
-            set([(None, "t")]),
-            set([(None, "t")]),
+            {(schema, "t")},
+            {(schema, "t")},
             insp,
             uo,
             self.autogen_context,
@@ -867,40 +898,52 @@ class PostgresqlDetectSerialTest(TestBase):
         server_default = diffs[0][0][4]["existing_server_default"]
         eq_(
             _render_server_default_for_compare(
-                server_default, tab.c.x, self.autogen_context
+                server_default, self.autogen_context
             ),
             c_expected,
         )
 
-    def test_serial(self):
-        self._expect_default(None, Column("x", Integer, primary_key=True))
-
-    def test_separate_seq(self):
-        seq = Sequence("x_id_seq")
+    @testing.combinations((None,), ("test_schema",))
+    def test_serial(self, schema):
         self._expect_default(
-            "nextval('x_id_seq'::regclass)",
+            None, Column("x", Integer, primary_key=True), schema
+        )
+
+    @testing.combinations((None,), ("test_schema",))
+    def test_separate_seq(self, schema):
+        seq = Sequence("x_id_seq", schema=schema)
+        seq_name = seq.name if schema is None else f"{schema}.{seq.name}"
+        self._expect_default(
+            f"nextval('{seq_name}'::regclass)",
             Column(
                 "x", Integer, server_default=seq.next_value(), primary_key=True
             ),
+            schema,
             seq,
         )
 
-    def test_numeric(self):
-        seq = Sequence("x_id_seq")
+    @testing.combinations((None,), ("test_schema",))
+    def test_numeric(self, schema):
+        seq = Sequence("x_id_seq", schema=schema)
+        seq_name = seq.name if schema is None else f"{schema}.{seq.name}"
         self._expect_default(
-            "nextval('x_id_seq'::regclass)",
+            f"nextval('{seq_name}'::regclass)",
             Column(
                 "x",
                 Numeric(8, 2),
                 server_default=seq.next_value(),
                 primary_key=True,
             ),
+            schema,
             seq,
         )
 
-    def test_no_default(self):
+    @testing.combinations((None,), ("test_schema",))
+    def test_no_default(self, schema):
         self._expect_default(
-            None, Column("x", Integer, autoincrement=False, primary_key=True)
+            None,
+            Column("x", Integer, autoincrement=False, primary_key=True),
+            schema,
         )
 
 
@@ -949,7 +992,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_postgresql_array_type(self):
-
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
                 ARRAY(Integer), self.autogen_context
@@ -1003,7 +1045,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_generic_array_type(self):
-
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
                 types.ARRAY(Integer), self.autogen_context
@@ -1053,8 +1094,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_add_exclude_constraint(self):
-        from sqlalchemy.dialects.postgresql import ExcludeConstraint
-
         autogen_context = self.autogen_context
 
         m = MetaData()
@@ -1074,8 +1113,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_add_exclude_constraint_case_sensitive(self):
-        from sqlalchemy.dialects.postgresql import ExcludeConstraint
-
         autogen_context = self.autogen_context
 
         m = MetaData()
@@ -1100,8 +1137,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_inline_exclude_constraint(self):
-        from sqlalchemy.dialects.postgresql import ExcludeConstraint
-
         autogen_context = self.autogen_context
 
         m = MetaData()
@@ -1130,8 +1165,6 @@ class PostgresqlAutogenRenderTest(TestBase):
         )
 
     def test_inline_exclude_constraint_case_sensitive(self):
-        from sqlalchemy.dialects.postgresql import ExcludeConstraint
-
         autogen_context = self.autogen_context
 
         m = MetaData()
@@ -1157,6 +1190,121 @@ class PostgresqlAutogenRenderTest(TestBase):
             "name='TExclX'))",
         )
 
+    def test_inline_exclude_constraint_literal_column(self):
+        """test for #1184"""
+
+        autogen_context = self.autogen_context
+
+        m = MetaData()
+        t = Table(
+            "TTable",
+            m,
+            Column("id", String()),
+            ExcludeConstraint(
+                (literal_column("id + 2"), "="), name="TExclID", using="gist"
+            ),
+        )
+
+        op_obj = ops.CreateTableOp.from_table(t)
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.create_table('TTable',sa.Column('id', sa.String(), "
+            "nullable=True),"
+            "postgresql.ExcludeConstraint((sa.literal_column('id + 2'), '='), "
+            "using='gist', "
+            "name='TExclID'))",
+        )
+
+    @config.requirements.sqlalchemy_2
+    def test_inline_exclude_constraint_fn(self):
+        """test for #1230"""
+
+        autogen_context = self.autogen_context
+
+        effective_time = Column("effective_time", DateTime(timezone=True))
+        expiry_time = Column("expiry_time", DateTime(timezone=True))
+
+        m = MetaData()
+        t = Table(
+            "TTable",
+            m,
+            effective_time,
+            expiry_time,
+            ExcludeConstraint(
+                (func.tstzrange(effective_time, expiry_time), "&&"),
+                using="gist",
+            ),
+        )
+
+        op_obj = ops.CreateTableOp.from_table(t)
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.create_table('TTable',sa.Column('effective_time', "
+            "sa.DateTime(timezone=True), nullable=True),"
+            "sa.Column('expiry_time', sa.DateTime(timezone=True), "
+            "nullable=True),postgresql.ExcludeConstraint("
+            "(sa.text('tstzrange(effective_time, expiry_time)'), "
+            "'&&'), using='gist'))",
+        )
+
+    @config.requirements.sqlalchemy_2
+    def test_inline_exclude_constraint_text(self):
+        """test for #1184.
+
+        Requires SQLAlchemy 2.0.5 due to issue
+        https://github.com/sqlalchemy/sqlalchemy/issues/9401
+
+        """
+
+        autogen_context = self.autogen_context
+
+        m = MetaData()
+        t = Table(
+            "TTable",
+            m,
+            Column("id", String()),
+            ExcludeConstraint(
+                (text("id + 2"), "="), name="TExclID", using="gist"
+            ),
+        )
+
+        op_obj = ops.CreateTableOp.from_table(t)
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.create_table('TTable',sa.Column('id', sa.String(), "
+            "nullable=True),"
+            "postgresql.ExcludeConstraint((sa.text('id + 2'), '='), "
+            "using='gist', "
+            "name='TExclID'))",
+        )
+
+    def test_drop_exclude_constraint(self):
+        """test for #1300"""
+
+        autogen_context = self.autogen_context
+
+        m = MetaData()
+        t = Table(
+            "TTable", m, Column("XColumn", String), Column("YColumn", String)
+        )
+
+        op_obj = ops.DropConstraintOp.from_constraint(
+            ExcludeConstraint(
+                (t.c.XColumn, ">"),
+                where=t.c.XColumn != 2,
+                using="gist",
+                name="t_excl_x",
+            )
+        )
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.drop_constraint('t_excl_x', 'TTable')",
+        )
+
     def test_json_type(self):
         eq_ignore_whitespace(
             autogenerate.render._repr_type(JSON(), self.autogen_context),
@@ -1167,6 +1315,61 @@ class PostgresqlAutogenRenderTest(TestBase):
         eq_ignore_whitespace(
             autogenerate.render._repr_type(JSONB(), self.autogen_context),
             "postgresql.JSONB(astext_type=sa.Text())",
+        )
+
+    def test_jsonb_expression_in_index(self):
+        """test #1322"""
+
+        m = MetaData()
+        t = Table("tbl", m, Column("c", JSONB()))
+        idx = Index("my_idx", t.c.c["foo"].astext)
+
+        eq_ignore_whitespace(
+            autogenerate.render.render_op_text(
+                self.autogen_context,
+                ops.CreateIndexOp.from_index(idx),
+            ),
+            "op.create_index('my_idx', 'tbl', "
+            "[sa.text(\"(c ->> 'foo')\")], unique=False)",
+        )
+
+    @config.requirements.nulls_not_distinct_sa
+    def test_render_unique_nulls_not_distinct_constraint(self):
+        m = MetaData()
+        t = Table("tbl", m, Column("c", Integer))
+        uc = UniqueConstraint(
+            t.c.c,
+            name="uq_1",
+            deferrable="XYZ",
+            postgresql_nulls_not_distinct=True,
+        )
+        eq_ignore_whitespace(
+            autogenerate.render.render_op_text(
+                self.autogen_context,
+                ops.AddConstraintOp.from_constraint(uc),
+            ),
+            "op.create_unique_constraint('uq_1', 'tbl', ['c'], "
+            "deferrable='XYZ', postgresql_nulls_not_distinct=True)",
+        )
+        eq_ignore_whitespace(
+            autogenerate.render._render_unique_constraint(
+                uc, self.autogen_context, None
+            ),
+            "sa.UniqueConstraint('c', deferrable='XYZ', name='uq_1', "
+            "postgresql_nulls_not_distinct=True)",
+        )
+
+    @config.requirements.nulls_not_distinct_sa
+    def test_render_index_nulls_not_distinct_constraint(self):
+        m = MetaData()
+        t = Table("tbl", m, Column("c", Integer))
+        idx = Index("ix_42", t.c.c, postgresql_nulls_not_distinct=False)
+        eq_ignore_whitespace(
+            autogenerate.render.render_op_text(
+                self.autogen_context, ops.CreateIndexOp.from_index(idx)
+            ),
+            "op.create_index('ix_42', 'tbl', ['c'], unique=False, "
+            "postgresql_nulls_not_distinct=False)",
         )
 
 
@@ -1250,8 +1453,6 @@ class PGUniqueIndexAutogenerateTest(AutogenFixtureTest, TestBase):
 
     @config.requirements.btree_gist
     def test_exclude_const_unchanged(self):
-        from sqlalchemy.dialects.postgresql import TSRANGE, ExcludeConstraint
-
         m1 = MetaData()
         m2 = MetaData()
 
@@ -1308,66 +1509,341 @@ class PGUniqueIndexAutogenerateTest(AutogenFixtureTest, TestBase):
         eq_(diffs[0][1].name, "uq_name")
         eq_(len(diffs), 1)
 
-    def test_functional_ix_one(self):
+
+def _lots_of_indexes(flatten: bool = False):
+    diff_pairs = [
+        (
+            lambda t: Index("idx", t.c.jb["foo"]),
+            lambda t: Index("idx", t.c.jb["bar"]),
+        ),
+        (
+            lambda t: Index("idx", t.c.jb["foo"]),
+            lambda t: Index("idx", t.c.jb["not_jsonb_path_ops"]),
+        ),
+        (
+            lambda t: Index("idx", t.c.jb["not_jsonb_path_ops"]),
+            lambda t: Index("idx", t.c.jb["bar"]),
+        ),
+        (
+            lambda t: Index("idx", t.c.aa),
+            lambda t: Index("idx", t.c.not_jsonb_path_ops),
+        ),
+        (
+            lambda t: Index("idx", t.c.not_jsonb_path_ops),
+            lambda t: Index("idx", t.c.aa),
+        ),
+        (
+            lambda t: Index(
+                "idx",
+                t.c.jb["foo"].label("x"),
+                postgresql_using="gin",
+                postgresql_ops={"x": "jsonb_path_ops"},
+            ),
+            lambda t: Index(
+                "idx",
+                t.c.jb["bar"].label("x"),
+                postgresql_using="gin",
+                postgresql_ops={"x": "jsonb_path_ops"},
+            ),
+        ),
+        (
+            lambda t: Index("idx", t.c.jb["foo"].astext),
+            lambda t: Index("idx", t.c.jb["bar"].astext),
+        ),
+        (
+            lambda t: Index("idx", t.c.jb["foo"].as_integer()),
+            lambda t: Index("idx", t.c.jb["bar"].as_integer()),
+        ),
+        (
+            lambda t: Index("idx", text("(jb->'x')"), _table=t),
+            lambda t: Index("idx", text("(jb->'y')"), _table=t),
+        ),
+    ]
+    if flatten:
+        return list(itertools.chain.from_iterable(diff_pairs))
+    else:
+        return diff_pairs
+
+
+def _equal_indexes():
+    the_indexes = [(fn, fn) for fn in _lots_of_indexes(True)]
+    the_indexes += [
+        (
+            lambda t: Index("idx", text("(jb->'x')"), _table=t),
+            lambda t: Index("idx", text("(jb -> 'x')"), _table=t),
+        ),
+        (
+            lambda t: Index("idx", text("cast(jb->'x' as integer)"), _table=t),
+            lambda t: Index("idx", text("(jb -> 'x')::integer"), _table=t),
+        ),
+    ]
+    return the_indexes
+
+
+def _index_op_clause():
+    def make_idx(t, *expr):
+        return Index(
+            "idx",
+            *(text(e) if isinstance(e, str) else e for e in expr),
+            postgresql_using="gin",
+            _table=t,
+        )
+
+    return [
+        (
+            False,
+            lambda t: make_idx(t, "(jb->'x')jsonb_path_ops"),
+            lambda t: make_idx(t, "(jb->'x')jsonb_path_ops"),
+        ),
+        (
+            False,
+            lambda t: make_idx(t, "aa array_ops"),
+            lambda t: make_idx(t, "aa array_ops"),
+        ),
+        (
+            False,
+            lambda t: make_idx(t, "(jb->'x')jsonb_path_ops"),
+            lambda t: make_idx(t, "(jb->'y')jsonb_path_ops"),
+        ),
+        (
+            False,
+            lambda t: make_idx(t, "aa array_ops"),
+            lambda t: make_idx(t, "jb array_ops"),
+        ),
+        (
+            False,
+            lambda t: make_idx(t, "aa array_ops", "(jb->'y')jsonb_path_ops"),
+            lambda t: make_idx(t, "(jb->'y')jsonb_path_ops", "aa array_ops"),
+        ),
+        (
+            True,
+            lambda t: make_idx(t, "aa array_ops", text("(jb->'x')")),
+            lambda t: make_idx(t, "aa array_ops", text("(jb->'y')")),
+        ),
+        (
+            True,
+            lambda t: make_idx(t, text("(jb->'x')"), "aa array_ops"),
+            lambda t: make_idx(t, text("(jb->'y')"), "aa array_ops"),
+        ),
+        (
+            True,
+            lambda t: make_idx(t, "aa array_ops", text("(jb->'x')")),
+            lambda t: make_idx(t, "jb array_ops", text("(jb->'y')")),
+        ),
+        (
+            True,
+            lambda t: make_idx(t, text("(jb->'x')"), "aa array_ops"),
+            lambda t: make_idx(t, text("(jb->'y')"), "jb array_ops"),
+        ),
+    ]
+
+
+class PGIndexAutogenerateTest(AutogenFixtureTest, TestBase):
+    __backend__ = True
+    __only_on__ = "postgresql"
+    __requires__ = ("reflect_indexes_with_expressions",)
+
+    @testing.fixture
+    def index_tables(self):
         m1 = MetaData()
         m2 = MetaData()
 
-        t1 = Table(
-            "foo",
+        t_old = Table(
+            "exp_index",
             m1,
             Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
+            Column("aa", ARRAY(Integer)),
+            Column("jb", JSONB),
+            Column("not_jsonb_path_ops", Integer),
         )
-        Index("email_idx", func.lower(t1.c.email), unique=True)
 
-        t2 = Table(
-            "foo",
+        t_new = Table(
+            "exp_index",
             m2,
             Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
+            Column("aa", ARRAY(Integer)),
+            Column("jb", JSONB),
+            Column("not_jsonb_path_ops", Integer),
         )
-        Index("email_idx", func.lower(t2.c.email), unique=True)
 
-        with assertions.expect_warnings(
-            "Skipped unsupported reflection",
-            "autogenerate skipping functional index",
-        ):
-            diffs = self._fixture(m1, m2)
+        return m1, m2, t_old, t_new
+
+    @combinations(*_lots_of_indexes(), argnames="old_fn, new_fn")
+    def test_expression_indexes_changed(self, index_tables, old_fn, new_fn):
+        m1, m2, old_table, new_table = index_tables
+
+        old = resolve_lambda(old_fn, t=old_table)
+        new = resolve_lambda(new_fn, t=new_table)
+
+        diffs = self._fixture(m1, m2)
+        eq_(
+            diffs,
+            [
+                ("remove_index", schemacompare.CompareIndex(old, True)),
+                ("add_index", schemacompare.CompareIndex(new)),
+            ],
+        )
+
+    @combinations(*_equal_indexes(), argnames="fn1, fn2")
+    def test_expression_indexes_no_change(self, index_tables, fn1, fn2):
+        m1, m2, old_table, new_table = index_tables
+
+        resolve_lambda(fn1, t=old_table)
+        resolve_lambda(fn2, t=new_table)
+
+        diffs = self._fixture(m1, m2)
         eq_(diffs, [])
 
-    def test_functional_ix_two(self):
+    @combinations(*_index_op_clause(), argnames="changed, old_fn, new_fn")
+    def test_expression_indexes_warn_operator(
+        self, index_tables, changed, old_fn, new_fn
+    ):
+        m1, m2, old_table, new_table = index_tables
+
+        old = old_fn(t=old_table)
+        new = new_fn(t=new_table)
+
+        with expect_warnings(
+            r"Expression #\d .+ in index 'idx' detected to include "
+            "an operator clause. Expression compare cannot proceed. "
+            "Please move the operator clause to the "
+        ):
+            diffs = self._fixture(m1, m2)
+        if changed:
+            eq_(
+                diffs,
+                [
+                    ("remove_index", schemacompare.CompareIndex(old, True)),
+                    ("add_index", schemacompare.CompareIndex(new)),
+                ],
+            )
+        else:
+            eq_(diffs, [])
+
+
+case = combinations(
+    ("nulls_not_distinct=False", False),
+    ("nulls_not_distinct=True", True),
+    ("nulls_not_distinct=None", None),
+    argnames="case",
+    id_="ia",
+)
+name_type = combinations(
+    (
+        "index",
+        lambda value: Index(
+            "nnd_obj", "name", unique=True, postgresql_nulls_not_distinct=value
+        ),
+    ),
+    (
+        "constraint",
+        lambda value: UniqueConstraint(
+            "id", "name", name="nnd_obj", postgresql_nulls_not_distinct=value
+        ),
+    ),
+    argnames="name,type_",
+    id_="sa",
+)
+
+
+class PGNullsNotDistinctAutogenerateTest(AutogenFixtureTest, TestBase):
+    __requires__ = ("nulls_not_distinct_db",)
+    __only_on__ = "postgresql"
+    __backend__ = True
+
+    @case
+    @name_type
+    def test_add(self, case, name, type_):
         m1 = MetaData()
         m2 = MetaData()
-
-        t1 = Table(
-            "foo",
+        Table(
+            "tbl",
             m1,
             Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-            Column("name", String(50)),
+            Column("name", String),
         )
-        Index(
-            "email_idx",
-            func.coalesce(t1.c.email, t1.c.name).desc(),
-            unique=True,
-        )
-
-        t2 = Table(
-            "foo",
+        Table(
+            "tbl",
             m2,
             Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-            Column("name", String(50)),
+            Column("name", String),
+            type_(case),
         )
-        Index(
-            "email_idx",
-            func.coalesce(t2.c.email, t2.c.name).desc(),
-            unique=True,
-        )
+        diffs = self._fixture(m1, m2)
+        eq_(len(diffs), 1)
+        eq_(diffs[0][0], f"add_{name}")
+        added = diffs[0][1]
+        eq_(added.name, "nnd_obj")
+        eq_(added.dialect_kwargs["postgresql_nulls_not_distinct"], case)
 
-        with assertions.expect_warnings(
-            "Skipped unsupported reflection",
-            "autogenerate skipping functional index",
-        ):
-            diffs = self._fixture(m1, m2)
-        eq_(diffs, [])
+    @case
+    @name_type
+    def test_remove(self, case, name, type_):
+        m1 = MetaData()
+        m2 = MetaData()
+        Table(
+            "tbl",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+            type_(case),
+        )
+        Table(
+            "tbl",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+        )
+        diffs = self._fixture(m1, m2)
+        eq_(len(diffs), 1)
+        eq_(diffs[0][0], f"remove_{name}")
+        eq_(diffs[0][1].name, "nnd_obj")
+
+    @case
+    @name_type
+    def test_toggle_not_distinct(self, case, name, type_):
+        m1 = MetaData()
+        m2 = MetaData()
+        to = not case
+        Table(
+            "tbl",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+            type_(case),
+        )
+        Table(
+            "tbl",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+            type_(to),
+        )
+        diffs = self._fixture(m1, m2)
+        eq_(len(diffs), 2)
+        eq_(diffs[0][0], f"remove_{name}")
+        eq_(diffs[1][0], f"add_{name}")
+        eq_(diffs[1][1].name, "nnd_obj")
+        eq_(diffs[1][1].dialect_kwargs["postgresql_nulls_not_distinct"], to)
+
+    @case
+    @name_type
+    def test_no_change(self, case, name, type_):
+        m1 = MetaData()
+        m2 = MetaData()
+        Table(
+            "tbl",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+            type_(case),
+        )
+        Table(
+            "tbl",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("name", String),
+            type_(case),
+        )
+        diffs = self._fixture(m1, m2)
+        eq_(len(diffs), 0, str(diffs))
