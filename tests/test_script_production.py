@@ -1,10 +1,14 @@
 import datetime
 import os
+from pathlib import Path
 import re
+from unittest.mock import patch
 
-from dateutil import tz
 import sqlalchemy as sa
+from sqlalchemy import Column
 from sqlalchemy import inspect
+from sqlalchemy import MetaData
+from sqlalchemy import Table
 
 from alembic import autogenerate
 from alembic import command
@@ -37,9 +41,10 @@ from alembic.testing.fixtures import TestBase
 from alembic.util import CommandError
 
 try:
-    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
 except ImportError:
-    from mock import patch  # noqa
+    from backports.zoneinfo import ZoneInfo
+
 env, abc, def_ = None, None, None
 
 
@@ -62,7 +67,7 @@ class GeneralOrderedTests(TestBase):
         self._test_008_long_name_configurable()
 
     def _test_001_environment(self):
-        assert_set = set(["env.py", "script.py.mako", "README"])
+        assert_set = {"env.py", "script.py.mako", "README"}
         eq_(assert_set.intersection(os.listdir(env.dir)), assert_set)
 
     def _test_002_rev_ids(self):
@@ -101,7 +106,7 @@ class GeneralOrderedTests(TestBase):
         )
         eq_(script.revision, def_)
         eq_(script.down_revision, abc)
-        eq_(env.get_revision(abc).nextrev, set([def_]))
+        eq_(env.get_revision(abc).nextrev, {def_})
         assert script.module.down_revision == abc
         assert callable(script.module.upgrade)
         assert callable(script.module.downgrade)
@@ -115,7 +120,7 @@ class GeneralOrderedTests(TestBase):
         env = staging_env(create=False)
         abc_rev = env.get_revision(abc)
         def_rev = env.get_revision(def_)
-        eq_(abc_rev.nextrev, set([def_]))
+        eq_(abc_rev.nextrev, {def_})
         eq_(abc_rev.revision, abc)
         eq_(def_rev.down_revision, abc)
         eq_(env.get_heads(), [def_])
@@ -188,12 +193,16 @@ class ScriptNamingTest(TestBase):
 
     @testing.combinations(
         (
-            datetime.datetime(2012, 7, 25, 15, 8, 5, tzinfo=tz.gettz("UTC")),
+            datetime.datetime(
+                2012, 7, 25, 15, 8, 5, tzinfo=datetime.timezone.utc
+            ),
             "%s/versions/1343228885_12345_this_is_a_"
             "message_2012_7_25_15_8_5.py",
         ),
         (
-            datetime.datetime(2012, 7, 25, 15, 8, 6, tzinfo=tz.gettz("UTC")),
+            datetime.datetime(
+                2012, 7, 25, 15, 8, 6, tzinfo=datetime.timezone.utc
+            ),
             "%s/versions/1343228886_12345_this_is_a_"
             "message_2012_7_25_15_8_6.py",
         ),
@@ -226,7 +235,8 @@ class ScriptNamingTest(TestBase):
         with mock.patch(
             "alembic.script.base.datetime",
             mock.Mock(
-                datetime=mock.Mock(utcnow=lambda: given, now=lambda: given)
+                datetime=mock.Mock(utcnow=lambda: given, now=lambda: given),
+                timezone=datetime.timezone,
             ),
         ):
             create_date = script._generate_create_date()
@@ -237,7 +247,7 @@ class ScriptNamingTest(TestBase):
             "EST5EDT",
             datetime.datetime(2012, 7, 25, 15, 8, 5),
             datetime.datetime(
-                2012, 7, 25, 11, 8, 5, tzinfo=tz.gettz("EST5EDT")
+                2012, 7, 25, 11, 8, 5, tzinfo=ZoneInfo("EST5EDT")
             ),
         )
 
@@ -246,7 +256,7 @@ class ScriptNamingTest(TestBase):
             "est5edt",
             datetime.datetime(2012, 7, 25, 15, 8, 5),
             datetime.datetime(
-                2012, 7, 25, 11, 8, 5, tzinfo=tz.gettz("EST5EDT")
+                2012, 7, 25, 11, 8, 5, tzinfo=ZoneInfo("EST5EDT")
             ),
         )
 
@@ -254,7 +264,7 @@ class ScriptNamingTest(TestBase):
         self._test_tz(
             "utc",
             datetime.datetime(2012, 7, 25, 15, 8, 5),
-            datetime.datetime(2012, 7, 25, 15, 8, 5, tzinfo=tz.gettz("UTC")),
+            datetime.datetime(2012, 7, 25, 15, 8, 5, tzinfo=ZoneInfo("UTC")),
         )
 
     def test_custom_tzdata_tz(self):
@@ -262,7 +272,7 @@ class ScriptNamingTest(TestBase):
             "Europe/Berlin",
             datetime.datetime(2012, 7, 25, 15, 8, 5),
             datetime.datetime(
-                2012, 7, 25, 17, 8, 5, tzinfo=tz.gettz("Europe/Berlin")
+                2012, 7, 25, 17, 8, 5, tzinfo=ZoneInfo("Europe/Berlin")
             ),
         )
 
@@ -283,10 +293,12 @@ class ScriptNamingTest(TestBase):
             datetime.datetime(2012, 7, 25, 15, 8, 5),
         )
 
-    def test_no_dateutil_module(self):
-        with patch("alembic.script.base.tz", new=None):
+    def test_no_zoneinfo_module(self):
+        with patch("alembic.script.base.ZoneInfo", new=None):
             with expect_raises_message(
-                CommandError, "The library 'python-dateutil' is required"
+                CommandError,
+                "Python >= 3.9 is required for timezone support or "
+                "the 'backports.zoneinfo' package must be installed.",
             ):
                 self._test_tz(
                     "utc",
@@ -319,7 +331,7 @@ class RevisionCommandTest(TestBase):
         rev = script.get_revision(rev.revision)
         eq_(rev.down_revision, self.b)
         assert "some message" in rev.doc
-        eq_(set(script.get_heads()), set([rev.revision, self.c]))
+        eq_(set(script.get_heads()), {rev.revision, self.c})
 
     def test_create_script_missing_splice(self):
         assert_raises_message(
@@ -710,7 +722,7 @@ class ImportsTest(TestBase):
                 context.configure(
                     connection=connection,
                     target_metadata=target_metadata,
-                    **kw
+                    **kw,
                 )
                 with context.begin_transaction():
                     context.run_migrations()
@@ -720,7 +732,6 @@ class ImportsTest(TestBase):
         )
 
     def test_imports_in_script(self):
-        from sqlalchemy import MetaData, Table, Column
         from sqlalchemy.dialects.mysql import VARCHAR
 
         type_ = VARCHAR(20, charset="utf8", national=True)
@@ -922,6 +933,11 @@ class RewriterTest(TestBase):
             idx_op = ops.CreateIndexOp("ixt", op.table_name, [op.column.name])
             return [op, idx_op]
 
+        def process_revision_directives(context, revision, generate_revisions):
+            generate_revisions[0].downgrade_ops = ops.DowngradeOps(
+                ops=[ops.DropColumnOp("t1", "x")]
+            )
+
         directives = [
             ops.MigrationScript(
                 util.rev_id(),
@@ -945,7 +961,8 @@ class RewriterTest(TestBase):
         ]
 
         ctx, rev = mock.Mock(), mock.Mock()
-        writer1.chain(writer2)(ctx, rev, directives)
+        writer = writer1.chain(process_revision_directives).chain(writer2)
+        writer(ctx, rev, directives)
 
         eq_(
             autogenerate.render_python_code(directives[0].upgrade_ops),
@@ -956,6 +973,13 @@ class RewriterTest(TestBase):
             "    op.alter_column('t1', 'x',\n"
             "               existing_type=sa.Integer(),\n"
             "               nullable=False)\n"
+            "    # ### end Alembic commands ###",
+        )
+
+        eq_(
+            autogenerate.render_python_code(directives[0].downgrade_ops),
+            "# ### commands auto generated by Alembic - please adjust! ###\n"
+            "    op.drop_column('t1', 'x')\n"
             "    # ### end Alembic commands ###",
         )
 
@@ -1089,6 +1113,50 @@ class RewriterTest(TestBase):
             "    )\n"
             "    # ### end Alembic commands ###",
         )
+
+    def test_add_execute_sql(self):
+        writer = autogenerate.Rewriter()
+
+        @writer.rewrites(ops.CreateTableOp)
+        def rewriter_execute_sql(context, revision, op):
+            execute_op = ops.ExecuteSQLOp(sqltext="STATEMENT")
+            return [op, execute_op]
+
+        directives = [
+            ops.MigrationScript(
+                util.rev_id(),
+                ops.UpgradeOps(
+                    ops=[
+                        ops.CreateTableOp(
+                            "test_table",
+                            [sa.Column("id", sa.Integer(), primary_key=True)],
+                        )
+                    ]
+                ),
+                ops.DowngradeOps(ops=[]),
+            )
+        ]
+
+        ctx, rev = mock.Mock(), mock.Mock()
+        writer(ctx, rev, directives)
+
+        eq_(
+            autogenerate.render_python_code(directives[0].upgrade_ops_list[0]),
+            "# ### commands auto generated by Alembic - please adjust! ###\n"
+            "    op.create_table('test_table',\n"
+            "    sa.Column('id', sa.Integer(), nullable=False),\n"
+            "    sa.PrimaryKeyConstraint('id')\n"
+            "    )\n"
+            "    op.execute('STATEMENT')\n"
+            "    # ### end Alembic commands ###",
+        )
+
+        diffs = directives[0].upgrade_ops_list[0].as_diffs()
+
+        eq_(diffs[0][0], "add_table")
+
+        eq_(diffs[1][0], "execute")
+        eq_(diffs[1][1], "STATEMENT")
 
 
 class MultiDirRevisionCommandTest(TestBase):
@@ -1334,28 +1402,23 @@ class NormPathTest(TestBase):
                 ).replace("/", ":NORM:"),
             )
 
-    def test_script_location_muliple(self):
+    def test_script_location_multiple(self):
         config = _multi_dir_testing_config()
 
         script = ScriptDirectory.from_config(config)
 
-        def normpath(path):
+        def _normpath(path):
             return path.replace("/", ":NORM:")
 
-        normpath = mock.Mock(side_effect=normpath)
+        normpath = mock.Mock(side_effect=_normpath)
 
         with mock.patch("os.path.normpath", normpath):
+            sd = Path(_get_staging_directory()).as_posix()
             eq_(
                 script._version_locations,
                 [
-                    os.path.abspath(
-                        os.path.join(_get_staging_directory(), "model1/")
-                    ).replace("/", ":NORM:"),
-                    os.path.abspath(
-                        os.path.join(_get_staging_directory(), "model2/")
-                    ).replace("/", ":NORM:"),
-                    os.path.abspath(
-                        os.path.join(_get_staging_directory(), "model3/")
-                    ).replace("/", ":NORM:"),
+                    _normpath(os.path.abspath(sd + "/model1/")),
+                    _normpath(os.path.abspath(sd + "/model2/")),
+                    _normpath(os.path.abspath(sd + "/model3/")),
                 ],
             )

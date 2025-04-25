@@ -11,6 +11,7 @@ from sqlalchemy import Enum
 from sqlalchemy import FLOAT
 from sqlalchemy import ForeignKey
 from sqlalchemy import ForeignKeyConstraint
+from sqlalchemy import func
 from sqlalchemy import Index
 from sqlalchemy import inspect
 from sqlalchemy import INTEGER
@@ -54,6 +55,7 @@ from alembic.testing.suite._autogen_fixtures import _default_name_filters
 from alembic.testing.suite._autogen_fixtures import _default_object_filters
 from alembic.testing.suite._autogen_fixtures import AutogenFixtureTest
 from alembic.testing.suite._autogen_fixtures import AutogenTest
+from alembic.testing.suite._autogen_fixtures import ModelOne
 from alembic.util import CommandError
 
 # TODO: we should make an adaptation of CompareMetadataToInspectorTest that is
@@ -236,8 +238,7 @@ class AutogenDefaultSchemaTest(AutogenFixtureTest, TestBase):
     __only_on__ = "postgresql"
     __backend__ = True
 
-    def test_uses_explcit_schema_in_default_one(self):
-
+    def test_uses_explicit_schema_in_default_one(self):
         default_schema = self.bind.dialect.default_schema_name
 
         m1 = MetaData()
@@ -249,8 +250,7 @@ class AutogenDefaultSchemaTest(AutogenFixtureTest, TestBase):
         diffs = self._fixture(m1, m2, include_schemas=True)
         eq_(diffs, [])
 
-    def test_uses_explcit_schema_in_default_two(self):
-
+    def test_uses_explicit_schema_in_default_two(self):
         default_schema = self.bind.dialect.default_schema_name
 
         m1 = MetaData()
@@ -266,8 +266,7 @@ class AutogenDefaultSchemaTest(AutogenFixtureTest, TestBase):
         eq_(diffs[0][1].schema, "test_schema")
         eq_(diffs[0][1].c.keys(), ["y"])
 
-    def test_uses_explcit_schema_in_default_three(self):
-
+    def test_uses_explicit_schema_in_default_three(self):
         default_schema = self.bind.dialect.default_schema_name
 
         m1 = MetaData()
@@ -289,7 +288,7 @@ class AutogenDefaultSchemaIsNoneTest(AutogenFixtureTest, TestBase):
     __only_on__ = "sqlite"
 
     def setUp(self):
-        super(AutogenDefaultSchemaIsNoneTest, self).setUp()
+        super().setUp()
 
         # in SQLAlchemy 1.4, SQLite dialect is setting this name
         # to "main" as is the actual default schema name for SQLite.
@@ -299,7 +298,6 @@ class AutogenDefaultSchemaIsNoneTest(AutogenFixtureTest, TestBase):
         eq_(self.bind.dialect.default_schema_name, None)
 
     def test_no_default_schema(self):
-
         m1 = MetaData()
         m2 = MetaData()
 
@@ -316,104 +314,6 @@ class AutogenDefaultSchemaIsNoneTest(AutogenFixtureTest, TestBase):
             m1, m2, include_schemas=True, object_filters=_include_object
         )
         eq_(len(diffs), 0)
-
-
-class ModelOne:
-    __requires__ = ("unique_constraint_reflection",)
-
-    schema = None
-
-    @classmethod
-    def _get_db_schema(cls):
-        schema = cls.schema
-
-        m = MetaData(schema=schema)
-
-        Table(
-            "user",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("name", String(50)),
-            Column("a1", Text),
-            Column("pw", String(50)),
-            Index("pw_idx", "pw"),
-        )
-
-        Table(
-            "address",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("email_address", String(100), nullable=False),
-        )
-
-        Table(
-            "order",
-            m,
-            Column("order_id", Integer, primary_key=True),
-            Column(
-                "amount",
-                Numeric(8, 2),
-                nullable=False,
-                server_default=text("0"),
-            ),
-            CheckConstraint("amount >= 0", name="ck_order_amount"),
-        )
-
-        Table(
-            "extra",
-            m,
-            Column("x", CHAR),
-            Column("uid", Integer, ForeignKey("user.id")),
-        )
-
-        return m
-
-    @classmethod
-    def _get_model_schema(cls):
-        schema = cls.schema
-
-        m = MetaData(schema=schema)
-
-        Table(
-            "user",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("name", String(50), nullable=False),
-            Column("a1", Text, server_default="x"),
-        )
-
-        Table(
-            "address",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("email_address", String(100), nullable=False),
-            Column("street", String(50)),
-            UniqueConstraint("email_address", name="uq_email"),
-        )
-
-        Table(
-            "order",
-            m,
-            Column("order_id", Integer, primary_key=True),
-            Column(
-                "amount",
-                Numeric(10, 2),
-                nullable=True,
-                server_default=text("0"),
-            ),
-            Column("user_id", Integer, ForeignKey("user.id")),
-            CheckConstraint("amount > -1", name="ck_order_amount"),
-        )
-
-        Table(
-            "item",
-            m,
-            Column("id", Integer, primary_key=True),
-            Column("description", String(100)),
-            Column("order_id", Integer, ForeignKey("order.order_id")),
-            CheckConstraint("len(description) > 5"),
-        )
-        return m
 
 
 class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
@@ -512,13 +412,11 @@ class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
         )
 
         alter_cols = (
-            set(
-                [
-                    d[2]
-                    for d in self._flatten_diffs(diffs)
-                    if d[0].startswith("modify")
-                ]
-            )
+            {
+                d[2]
+                for d in self._flatten_diffs(diffs)
+                if d[0].startswith("modify")
+            }
             .union(
                 d[3].name
                 for d in self._flatten_diffs(diffs)
@@ -530,7 +428,7 @@ class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
                 if d[0] == "add_table"
             )
         )
-        eq_(alter_cols, set(["user_id", "order", "user"]))
+        eq_(alter_cols, {"user_id", "order", "user"})
 
     def test_include_name(self):
         all_names = set()
@@ -582,13 +480,11 @@ class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
         )
 
         alter_cols = (
-            set(
-                [
-                    d[2]
-                    for d in self._flatten_diffs(diffs)
-                    if d[0].startswith("modify")
-                ]
-            )
+            {
+                d[2]
+                for d in self._flatten_diffs(diffs)
+                if d[0].startswith("modify")
+            }
             .union(
                 d[3].name
                 for d in self._flatten_diffs(diffs)
@@ -633,9 +529,6 @@ class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
     def test_custom_type_compare(self):
         class MyType(TypeDecorator):
             impl = Integer
-
-            def compare_against_backend(self, dialect, conn_type):
-                return isinstance(conn_type, Integer)
 
         ac = ops.AlterColumnOp("sometable", "somecol")
         autogenerate.compare._compare_type(
@@ -705,6 +598,17 @@ class AutogenerateDiffTest(ModelOne, AutogenTest, TestBase):
                 ("remove_table", "user"),
             ],
         )
+
+    def test_add_execute_sql_op(self):
+        uo = ops.UpgradeOps(ops=[])
+        autogenerate._produce_net_changes(self.autogen_context, uo)
+
+        uo.ops.append(ops.ExecuteSQLOp("STATEMENT"))
+
+        diffs = uo.as_diffs()
+
+        eq_(diffs[-1][0], "execute")
+        eq_(diffs[-1][1], "STATEMENT")
 
 
 class AutogenerateDiffTestWSchema(ModelOne, AutogenTest, TestBase):
@@ -857,13 +761,122 @@ class CompareTypeSpecificityTest(TestBase):
     def test_compare_type(
         self, impl_fixture, inspected_type, metadata_type, expected
     ):
-
         is_(
             impl_fixture.compare_type(
                 Column("x", inspected_type), Column("x", metadata_type)
             ),
             expected,
         )
+
+
+class CompareServerDefaultTest(TestBase):
+    __backend__ = True
+
+    @testing.fixture()
+    def connection(self):
+        with config.db.begin() as conn:
+            yield conn
+
+    @testing.fixture()
+    def metadata(self, connection):
+        m = MetaData()
+        yield m
+        m.drop_all(connection)
+
+    @testing.combinations(
+        (VARCHAR(30), text("'some default'"), text("'some new default'")),
+        (VARCHAR(30), "some default", "some new default"),
+        (VARCHAR(30), text("'//slash'"), text("'s//l//ash'")),
+        (Integer(), text("15"), text("20")),
+        (Integer(), "15", "20"),
+        id_="sss",
+        argnames="type_,default_text,new_default_text",
+    )
+    def test_server_default_yes_positives(
+        self, type_, default_text, new_default_text, connection, metadata
+    ):
+        t1 = Table(
+            "t1", metadata, Column("x", type_, server_default=default_text)
+        )
+        t1.create(connection)
+
+        new_metadata = MetaData()
+        Table(
+            "t1",
+            new_metadata,
+            Column("x", type_, server_default=new_default_text),
+        )
+
+        mc = MigrationContext.configure(
+            connection, opts={"compare_server_default": True}
+        )
+
+        diff = api.compare_metadata(mc, new_metadata)
+        eq_(len(diff), 1)
+        eq_(diff[0][0][0], "modify_default")
+
+    @testing.combinations(
+        (VARCHAR(30), text("'some default'")),
+        (VARCHAR(30), "some default"),
+        (VARCHAR(30), text("'//slash'")),
+        (VARCHAR(30), text("'has '' quote'")),
+        (
+            VARCHAR(30),
+            func.substring("name", 1, 3),
+            testing.exclusions.only_on(["mssql", "postgresql"]),
+        ),  # note no space
+        (
+            VARCHAR(30),
+            text("substring('name',1,3)"),
+            testing.exclusions.only_on(["mssql", "postgresql"]),
+        ),  # note no space
+        (
+            VARCHAR(30),
+            text("substring('name', 1, 3)"),
+            testing.exclusions.only_on(["mssql", "postgresql"]),
+        ),  # note spaces
+        (
+            VARCHAR(50),
+            text(
+                "substring(user_name(),"  # note no space
+                "charindex('',user_name())+(1),len(user_name()))"
+            ),
+            testing.exclusions.only_on("mssql"),
+        ),
+        (
+            VARCHAR(50),
+            text(
+                "substring(user_name(), "  # note space
+                "charindex('',user_name())+(1),len(user_name()))"
+            ),
+            testing.exclusions.only_on("mssql"),
+        ),
+        (DateTime(), text("(getdate())"), testing.exclusions.only_on("mssql")),
+        (
+            DateTime(),
+            text("(now())"),
+            testing.exclusions.only_on("postgresql", "sqlite"),
+        ),
+        (Integer(), text("15")),
+        (Integer(), "15"),
+        id_="ss",
+        argnames="type_,default_text",
+    )
+    def test_server_default_no_false_positives(
+        self, type_, default_text, connection, metadata
+    ):
+        t1 = Table(
+            "t1", metadata, Column("x", type_, server_default=default_text)
+        )
+        t1.create(connection)
+
+        mc = MigrationContext.configure(
+            connection, opts={"compare_server_default": True}
+        )
+
+        diff = api.compare_metadata(mc, metadata)
+
+        assert not diff
 
 
 class CompareMetadataToInspectorTest(TestBase):
@@ -1333,7 +1346,6 @@ class AutogenKeyTest(AutogenTest, TestBase):
     symbols = ["someothertable", "sometable"]
 
     def test_autogen(self):
-
         uo = ops.UpgradeOps(ops=[])
 
         ctx = self.autogen_context
@@ -1654,9 +1666,14 @@ class PGCompareMetaData(ModelOne, AutogenTest, TestBase):
             diffs[4][3],
         )
 
-        eq_(diffs[5][0][0], "modify_nullable")
-        eq_(diffs[5][0][5], False)
-        eq_(diffs[5][0][6], True)
+        eq_(diffs[5][0][0], "modify_type")
+        eq_(diffs[5][0][1:4], ("test_schema", "order", "amount"))
+        eq_(diffs[5][0][5].precision, 8)
+        eq_(diffs[5][0][6].precision, 10)
+
+        eq_(diffs[5][1][0], "modify_nullable")
+        eq_(diffs[5][1][5], False)
+        eq_(diffs[5][1][6], True)
 
 
 class OrigObjectTest(TestBase):
@@ -1669,6 +1686,7 @@ class OrigObjectTest(TestBase):
             Column("x", Integer()),
         )
         self.ix = Index("ix1", t.c.id)
+        self.ix_unique = Index("ix2", t.c.id, unique=True)
         fk = ForeignKeyConstraint(["t_id"], ["t.id"])
         q = Table("q", m, Column("t_id", Integer()), fk)
         self.table = t
@@ -1790,6 +1808,14 @@ class OrigObjectTest(TestBase):
         op = ops.CreateIndexOp.from_index(self.ix)
         eq_(op.to_index(), schemacompare.CompareIndex(self.ix))
         eq_(op.reverse().to_index(), schemacompare.CompareIndex(self.ix))
+
+    def test_create_unique_index(self):
+        op = ops.CreateIndexOp.from_index(self.ix_unique)
+        eq_(op.to_index(), schemacompare.CompareIndex(self.ix_unique))
+        eq_(
+            op.reverse().to_index(),
+            schemacompare.CompareIndex(self.ix_unique),
+        )
 
 
 class MultipleMetaDataTest(AutogenFixtureTest, TestBase):

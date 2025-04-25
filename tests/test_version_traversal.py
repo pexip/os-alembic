@@ -75,14 +75,14 @@ class RevisionPathTest(MigrationTest):
             self.e.revision,
             self.c.revision,
             [self.up_(self.d), self.up_(self.e)],
-            set([self.e.revision]),
+            {self.e.revision},
         )
 
         self._assert_upgrade(
             self.c.revision,
             None,
             [self.up_(self.a), self.up_(self.b), self.up_(self.c)],
-            set([self.c.revision]),
+            {self.c.revision},
         )
 
     def test_relative_upgrade_path(self):
@@ -90,36 +90,35 @@ class RevisionPathTest(MigrationTest):
             "+2",
             self.a.revision,
             [self.up_(self.b), self.up_(self.c)],
-            set([self.c.revision]),
+            {self.c.revision},
         )
 
         self._assert_upgrade(
-            "+1", self.a.revision, [self.up_(self.b)], set([self.b.revision])
+            "+1", self.a.revision, [self.up_(self.b)], {self.b.revision}
         )
 
         self._assert_upgrade(
             "+3",
             self.b.revision,
             [self.up_(self.c), self.up_(self.d), self.up_(self.e)],
-            set([self.e.revision]),
+            {self.e.revision},
         )
 
         self._assert_upgrade(
             "%s+2" % self.b.revision,
             self.a.revision,
             [self.up_(self.b), self.up_(self.c), self.up_(self.d)],
-            set([self.d.revision]),
+            {self.d.revision},
         )
 
         self._assert_upgrade(
             "%s-2" % self.d.revision,
             self.a.revision,
             [self.up_(self.b)],
-            set([self.b.revision]),
+            {self.b.revision},
         )
 
     def test_invalid_relative_upgrade_path(self):
-
         assert_raises_message(
             util.CommandError,
             "Relative revision -2 didn't produce 2 migrations",
@@ -137,12 +136,11 @@ class RevisionPathTest(MigrationTest):
         )
 
     def test_downgrade_path(self):
-
         self._assert_downgrade(
             self.c.revision,
             self.e.revision,
             [self.down_(self.e), self.down_(self.d)],
-            set([self.c.revision]),
+            {self.c.revision},
         )
 
         self._assert_downgrade(
@@ -153,34 +151,32 @@ class RevisionPathTest(MigrationTest):
         )
 
     def test_relative_downgrade_path(self):
-
         self._assert_downgrade(
-            "-1", self.c.revision, [self.down_(self.c)], set([self.b.revision])
+            "-1", self.c.revision, [self.down_(self.c)], {self.b.revision}
         )
 
         self._assert_downgrade(
             "-3",
             self.e.revision,
             [self.down_(self.e), self.down_(self.d), self.down_(self.c)],
-            set([self.b.revision]),
+            {self.b.revision},
         )
 
         self._assert_downgrade(
             "%s+2" % self.a.revision,
             self.d.revision,
             [self.down_(self.d)],
-            set([self.c.revision]),
+            {self.c.revision},
         )
 
         self._assert_downgrade(
             "%s-2" % self.c.revision,
             self.d.revision,
             [self.down_(self.d), self.down_(self.c), self.down_(self.b)],
-            set([self.a.revision]),
+            {self.a.revision},
         )
 
     def test_invalid_relative_downgrade_path(self):
-
         assert_raises_message(
             util.CommandError,
             "Relative revision -5 didn't produce 5 migrations",
@@ -198,7 +194,6 @@ class RevisionPathTest(MigrationTest):
         )
 
     def test_invalid_move_rev_to_none(self):
-
         assert_raises_message(
             util.CommandError,
             r"Destination %s is not a valid downgrade "
@@ -209,7 +204,6 @@ class RevisionPathTest(MigrationTest):
         )
 
     def test_invalid_move_higher_to_lower(self):
-
         assert_raises_message(
             util.CommandError,
             r"Destination %s is not a valid downgrade "
@@ -282,12 +276,11 @@ class BranchedPathTest(MigrationTest):
         )
 
     def test_upgrade_single_branch(self):
-
         self._assert_upgrade(
             self.d1.revision,
             self.b.revision,
             [self.up_(self.c1), self.up_(self.d1)],
-            set([self.d1.revision]),
+            {self.d1.revision},
         )
 
     def test_upgrade_multiple_branch(self):
@@ -303,7 +296,7 @@ class BranchedPathTest(MigrationTest):
                 self.up_(self.c1),
                 self.up_(self.d1),
             ],
-            set([self.d1.revision, self.d2.revision]),
+            {self.d1.revision, self.d2.revision},
         )
 
     def test_downgrade_multiple_branch(self):
@@ -317,16 +310,15 @@ class BranchedPathTest(MigrationTest):
                 self.down_(self.c2),
                 self.down_(self.b),
             ],
-            set([self.a.revision]),
+            {self.a.revision},
         )
 
     def test_relative_upgrade(self):
-
         self._assert_upgrade(
             "c2branch@head-1",
             self.b.revision,
             [self.up_(self.c2)],
-            set([self.c2.revision]),
+            {self.c2.revision},
         )
 
     def test_relative_downgrade_baseplus2(self):
@@ -340,7 +332,7 @@ class BranchedPathTest(MigrationTest):
                 self.down_(self.d2),
                 self.down_(self.c2),
             ],
-            set([self.b.revision]),
+            {self.b.revision},
         )
 
     def test_relative_downgrade_branchplus2(self):
@@ -353,7 +345,7 @@ class BranchedPathTest(MigrationTest):
             "c2branch@base+2",
             [self.d2.revision, self.d1.revision],
             [self.down_(self.d2), self.down_(self.c2)],
-            set([self.d1.revision]),
+            {self.d1.revision},
         )
 
     def test_relative_downgrade_branchplus3(self):
@@ -362,13 +354,13 @@ class BranchedPathTest(MigrationTest):
             self.c2.revision,
             [self.d2.revision, self.d1.revision],
             [self.down_(self.d2)],
-            set([self.d1.revision, self.c2.revision]),
+            {self.d1.revision, self.c2.revision},
         )
         self._assert_downgrade(
             "c2branch@base+3",
             [self.d2.revision, self.d1.revision],
             [self.down_(self.d2)],
-            set([self.d1.revision, self.c2.revision]),
+            {self.d1.revision, self.c2.revision},
         )
 
     # Old downgrade -1 behaviour depends on order of branch upgrades.
@@ -381,7 +373,7 @@ class BranchedPathTest(MigrationTest):
                 "-1",
                 [self.d2.revision, self.d1.revision],
                 [self.down_(self.d2)],
-                set([self.d1.revision, self.c2.revision]),
+                {self.d1.revision, self.c2.revision},
             )
 
     def test_downgrade_once_order_right_unbalanced(self):
@@ -390,7 +382,7 @@ class BranchedPathTest(MigrationTest):
                 "-1",
                 [self.c2.revision, self.d1.revision],
                 [self.down_(self.c2)],
-                set([self.d1.revision]),
+                {self.d1.revision},
             )
 
     def test_downgrade_once_order_left(self):
@@ -399,7 +391,7 @@ class BranchedPathTest(MigrationTest):
                 "-1",
                 [self.d1.revision, self.d2.revision],
                 [self.down_(self.d1)],
-                set([self.d2.revision, self.c1.revision]),
+                {self.d2.revision, self.c1.revision},
             )
 
     def test_downgrade_once_order_left_unbalanced(self):
@@ -408,7 +400,7 @@ class BranchedPathTest(MigrationTest):
                 "-1",
                 [self.c1.revision, self.d2.revision],
                 [self.down_(self.c1)],
-                set([self.d2.revision]),
+                {self.d2.revision},
             )
 
     def test_downgrade_once_order_left_unbalanced_labelled(self):
@@ -416,73 +408,73 @@ class BranchedPathTest(MigrationTest):
             "c1branch@-1",
             [self.d1.revision, self.d2.revision],
             [self.down_(self.d1)],
-            set([self.c1.revision, self.d2.revision]),
+            {self.c1.revision, self.d2.revision},
         )
 
     # Captures https://github.com/sqlalchemy/alembic/issues/765
 
     def test_downgrade_relative_order_right(self):
         self._assert_downgrade(
-            "{}-1".format(self.d2.revision),
+            f"{self.d2.revision}-1",
             [self.d2.revision, self.c1.revision],
             [self.down_(self.d2)],
-            set([self.c1.revision, self.c2.revision]),
+            {self.c1.revision, self.c2.revision},
         )
 
     def test_downgrade_relative_order_left(self):
         self._assert_downgrade(
-            "{}-1".format(self.d2.revision),
+            f"{self.d2.revision}-1",
             [self.c1.revision, self.d2.revision],
             [self.down_(self.d2)],
-            set([self.c1.revision, self.c2.revision]),
+            {self.c1.revision, self.c2.revision},
         )
 
     def test_downgrade_single_branch_c1branch(self):
         """Use branch label to specify the branch to downgrade."""
         self._assert_downgrade(
-            "c1branch@{}".format(self.b.revision),
+            f"c1branch@{self.b.revision}",
             (self.c1.revision, self.d2.revision),
             [
                 self.down_(self.c1),
             ],
-            set([self.d2.revision]),
+            {self.d2.revision},
         )
 
     def test_downgrade_single_branch_c1branch_from_d1_head(self):
         """Use branch label to specify the branch (where the branch label is
         not on the head revision)."""
         self._assert_downgrade(
-            "c2branch@{}".format(self.b.revision),
+            f"c2branch@{self.b.revision}",
             (self.c1.revision, self.d2.revision),
             [
                 self.down_(self.d2),
                 self.down_(self.c2),
             ],
-            set([self.c1.revision]),
+            {self.c1.revision},
         )
 
     def test_downgrade_single_branch_c2(self):
         """Use a revision on the branch (not head) to specify the branch."""
         self._assert_downgrade(
-            "{}@{}".format(self.c2.revision, self.b.revision),
+            f"{self.c2.revision}@{self.b.revision}",
             (self.d1.revision, self.d2.revision),
             [
                 self.down_(self.d2),
                 self.down_(self.c2),
             ],
-            set([self.d1.revision]),
+            {self.d1.revision},
         )
 
     def test_downgrade_single_branch_d1(self):
         """Use the head revision to specify the branch."""
         self._assert_downgrade(
-            "{}@{}".format(self.d1.revision, self.b.revision),
+            f"{self.d1.revision}@{self.b.revision}",
             (self.d1.revision, self.d2.revision),
             [
                 self.down_(self.d1),
                 self.down_(self.c1),
             ],
-            set([self.d2.revision]),
+            {self.d2.revision},
         )
 
     def test_downgrade_relative_to_branch_head(self):
@@ -490,7 +482,7 @@ class BranchedPathTest(MigrationTest):
             "c1branch@head-1",
             (self.d1.revision, self.d2.revision),
             [self.down_(self.d1)],
-            set([self.c1.revision, self.d2.revision]),
+            {self.c1.revision, self.d2.revision},
         )
 
     def test_upgrade_other_branch_from_mergepoint(self):
@@ -500,7 +492,7 @@ class BranchedPathTest(MigrationTest):
             "c2branch@+1",
             (self.c1.revision),
             [self.up_(self.c2)],
-            set([self.c1.revision, self.c2.revision]),
+            {self.c1.revision, self.c2.revision},
         )
 
     def test_upgrade_one_branch_of_heads(self):
@@ -511,7 +503,7 @@ class BranchedPathTest(MigrationTest):
             "c2branch@+1",
             (self.c1.revision, self.c2.revision),
             [self.up_(self.d2)],
-            set([self.c1.revision, self.d2.revision]),
+            {self.c1.revision, self.d2.revision},
         )
 
     def test_ambiguous_upgrade(self):
@@ -525,13 +517,11 @@ class BranchedPathTest(MigrationTest):
 
     def test_upgrade_from_base(self):
         self._assert_upgrade(
-            "base+1", [], [self.up_(self.a)], set([self.a.revision])
+            "base+1", [], [self.up_(self.a)], {self.a.revision}
         )
 
     def test_upgrade_from_base_implicit(self):
-        self._assert_upgrade(
-            "+1", [], [self.up_(self.a)], set([self.a.revision])
-        )
+        self._assert_upgrade("+1", [], [self.up_(self.a)], {self.a.revision})
 
     def test_downgrade_minus1_to_base(self):
         self._assert_downgrade(
@@ -553,18 +543,17 @@ class BranchedPathTest(MigrationTest):
             self.c2.revision,
             [self.d1.revision, self.c2.revision],
             [],
-            set([self.d1.revision, self.c2.revision]),
+            {self.d1.revision, self.c2.revision},
         )
         self._assert_downgrade(
             self.d1.revision,
             [self.d1.revision, self.c2.revision],
             [],
-            set([self.d1.revision, self.c2.revision]),
+            {self.d1.revision, self.c2.revision},
         )
 
 
 class BranchFromMergepointTest(MigrationTest):
-
     """this is a form that will come up frequently in the
     "many independent roots with cross-dependencies" case.
 
@@ -614,21 +603,19 @@ class BranchFromMergepointTest(MigrationTest):
             self.d1.revision,
             (self.d2.revision, self.b1.revision),
             [self.up_(self.c1), self.up_(self.d1)],
-            set([self.d2.revision, self.d1.revision]),
+            {self.d2.revision, self.d1.revision},
         )
 
     def test_mergepoint_to_only_one_side_downgrade(self):
-
         self._assert_downgrade(
             self.b1.revision,
             (self.d2.revision, self.d1.revision),
             [self.down_(self.d1), self.down_(self.c1)],
-            set([self.d2.revision, self.b1.revision]),
+            {self.d2.revision, self.b1.revision},
         )
 
 
 class BranchFrom3WayMergepointTest(MigrationTest):
-
     """this is a form that will come up frequently in the
     "many independent roots with cross-dependencies" case.
 
@@ -693,12 +680,11 @@ class BranchFrom3WayMergepointTest(MigrationTest):
         clear_staging_env()
 
     def test_mergepoint_to_only_one_side_upgrade(self):
-
         self._assert_upgrade(
             self.d1.revision,
             (self.d3.revision, self.d2.revision, self.b1.revision),
             [self.up_(self.c1), self.up_(self.d1)],
-            set([self.d3.revision, self.d2.revision, self.d1.revision]),
+            {self.d3.revision, self.d2.revision, self.d1.revision},
         )
 
     def test_mergepoint_to_only_one_side_downgrade(self):
@@ -706,17 +692,16 @@ class BranchFrom3WayMergepointTest(MigrationTest):
             self.b1.revision,
             (self.d3.revision, self.d2.revision, self.d1.revision),
             [self.down_(self.d1), self.down_(self.c1)],
-            set([self.d3.revision, self.d2.revision, self.b1.revision]),
+            {self.d3.revision, self.d2.revision, self.b1.revision},
         )
 
     def test_mergepoint_to_two_sides_upgrade(self):
-
         self._assert_upgrade(
             self.d1.revision,
             (self.d3.revision, self.b2.revision, self.b1.revision),
             [self.up_(self.c2), self.up_(self.c1), self.up_(self.d1)],
             # this will merge b2 and b1 into d1
-            set([self.d3.revision, self.d1.revision]),
+            {self.d3.revision, self.d1.revision},
         )
 
         # but then!  b2 will break out again if we keep going with it
@@ -724,7 +709,7 @@ class BranchFrom3WayMergepointTest(MigrationTest):
             self.d2.revision,
             (self.d3.revision, self.d1.revision),
             [self.up_(self.d2)],
-            set([self.d3.revision, self.d2.revision, self.d1.revision]),
+            {self.d3.revision, self.d2.revision, self.d1.revision},
         )
 
 
@@ -916,14 +901,14 @@ class DependsOnBranchTestOne(MigrationTest):
         heads = [self.c2.revision, self.d1.revision]
         head = HeadMaintainer(mock.Mock(), heads)
         head.update_to_step(self.down_(self.d1))
-        eq_(head.heads, set([self.c2.revision]))
+        eq_(head.heads, {self.c2.revision})
 
     def test_stamp_across_dependency(self):
         heads = [self.e1.revision, self.c2.revision]
         head = HeadMaintainer(mock.Mock(), heads)
         for step in self.env._stamp_revs(self.b1.revision, heads):
             head.update_to_step(step)
-        eq_(head.heads, set([self.b1.revision]))
+        eq_(head.heads, {self.b1.revision})
 
 
 class DependsOnBranchTestTwo(MigrationTest):
@@ -1010,15 +995,13 @@ class DependsOnBranchTestTwo(MigrationTest):
             self.b2.revision,
             heads,
             [self.down_(self.bmerge)],
-            set(
-                [
-                    self.amerge.revision,
-                    self.b1.revision,
-                    self.cmerge.revision,
-                    # b2 isn't here, but d1 is, which implies b2. OK!
-                    self.d1.revision,
-                ]
-            ),
+            {
+                self.amerge.revision,
+                self.b1.revision,
+                self.cmerge.revision,
+                # b2 isn't here, but d1 is, which implies b2. OK!
+                self.d1.revision,
+            },
         )
 
         # start with those heads..
@@ -1034,15 +1017,13 @@ class DependsOnBranchTestTwo(MigrationTest):
             "d1@base",
             heads,
             [self.down_(self.d1)],
-            set(
-                [
-                    self.amerge.revision,
-                    self.b1.revision,
-                    # b2 has to be INSERTed, because it was implied by d1
-                    self.b2.revision,
-                    self.cmerge.revision,
-                ]
-            ),
+            {
+                self.amerge.revision,
+                self.b1.revision,
+                # b2 has to be INSERTed, because it was implied by d1
+                self.b2.revision,
+                self.cmerge.revision,
+            },
         )
 
         # start with those heads ...
@@ -1071,7 +1052,7 @@ class DependsOnBranchTestTwo(MigrationTest):
                 self.down_(self.c2),
                 self.down_(self.c3),
             ],
-            set([]),
+            set(),
         )
 
 
@@ -1122,7 +1103,7 @@ class DependsOnBranchTestThree(MigrationTest):
             "b1",
             ["a3", "b2"],
             [self.down_(self.b2)],
-            set(["a3"]),  # we have b1 also, which is implied by a3
+            {"a3"},  # we have b1 also, which is implied by a3
         )
 
 
@@ -1145,7 +1126,7 @@ class DependsOnOwnDownrevTest(MigrationTest):
             self.a2.revision,
             None,
             [self.up_(self.a1), self.up_(self.a2)],
-            set(["a2"]),
+            {"a2"},
         )
 
     def test_traverse_down(self):
@@ -1153,7 +1134,7 @@ class DependsOnOwnDownrevTest(MigrationTest):
             self.a1.revision,
             self.a2.revision,
             [self.down_(self.a2)],
-            set(["a1"]),
+            {"a1"},
         )
 
 
@@ -1182,7 +1163,6 @@ class DependsOnBranchTestFour(MigrationTest):
         clear_staging_env()
 
     def test_dependencies_are_normalized(self):
-
         heads = [self.b4.revision]
 
         self._assert_downgrade(
@@ -1190,7 +1170,68 @@ class DependsOnBranchTestFour(MigrationTest):
             heads,
             [self.down_(self.b4)],
             # a3 isn't here, because b3 still implies a3
-            set([self.b3.revision]),
+            {self.b3.revision},
+        )
+
+
+class DependsOnBranchTestFive(MigrationTest):
+    @classmethod
+    def setup_class(cls):
+        """
+        issue #1373
+
+        Structure::
+
+            <base> -> a1 ------+
+                      ^        |
+                      |        +-> bmerge
+                      |        |
+                      +-- b1 --+
+        """
+        cls.env = env = staging_env()
+        cls.a1 = env.generate_revision("a1", "->a1")
+        cls.b1 = env.generate_revision(
+            "b1", "->b1", head="base", depends_on="a1"
+        )
+        cls.bmerge = env.generate_revision(
+            "bmerge", "bmerge", head=[cls.a1.revision, cls.b1.revision]
+        )
+
+    @classmethod
+    def teardown_class(cls):
+        clear_staging_env()
+
+    def test_downgrade_to_depends_on(self):
+        # Upgrade from a1 to b1 just has heads={"b1"}.
+        self._assert_upgrade(
+            self.b1.revision,
+            self.a1.revision,
+            [self.up_(self.b1)],
+            {self.b1.revision},
+        )
+
+        # Upgrade from b1 to bmerge just has {"bmerge"}.
+        self._assert_upgrade(
+            self.bmerge.revision,
+            self.b1.revision,
+            [self.up_(self.bmerge)],
+            {self.bmerge.revision},
+        )
+
+        # Downgrading from bmerge to a1 should return back to heads={"b1"}.
+        self._assert_downgrade(
+            self.a1.revision,
+            self.bmerge.revision,
+            [self.down_(self.bmerge)],
+            {self.b1.revision},
+        )
+
+        # Downgrading from bmerge to b1 also returns back to heads={"b1"}.
+        self._assert_downgrade(
+            self.b1.revision,
+            self.bmerge.revision,
+            [self.down_(self.bmerge)],
+            {self.b1.revision},
         )
 
 
@@ -1239,7 +1280,7 @@ class DependsOnBranchLabelTest(MigrationTest):
                 self.up_(self.b2),
                 self.up_(self.c2),
             ],
-            set([self.c2.revision]),
+            {self.c2.revision},
         )
 
 
@@ -1276,8 +1317,8 @@ class ForestTest(MigrationTest):
         revs = self.env._stamp_revs("heads", ())
         eq_(len(revs), 2)
         eq_(
-            set(r.to_revisions for r in revs),
-            set([(self.b1.revision,), (self.b2.revision,)]),
+            {r.to_revisions for r in revs},
+            {(self.b1.revision,), (self.b2.revision,)},
         )
 
     def test_stamp_to_heads_no_moves_needed(self):
@@ -1349,7 +1390,7 @@ class MergedPathTest(MigrationTest):
             ([], self.c2.revision, self.e.revision),
         )
 
-    def test_stamp_labled_head_across_merge_from_multiple_branch(self):
+    def test_stamp_labeled_head_across_merge_from_multiple_branch(self):
         # this is testing that filter_for_lineage() checks for
         # d1 both in terms of "c2branch" as well as that the "head"
         # revision "f" is the head of both d1 and d2
@@ -1384,7 +1425,6 @@ class MergedPathTest(MigrationTest):
         )
 
     def test_upgrade_across_merge_point(self):
-
         eq_(
             self.env._upgrade_revs(self.f.revision, self.b.revision),
             [
@@ -1399,7 +1439,6 @@ class MergedPathTest(MigrationTest):
         )
 
     def test_downgrade_across_merge_point(self):
-
         eq_(
             self.env._downgrade_revs(self.b.revision, self.f.revision),
             [
@@ -1448,19 +1487,19 @@ class BranchedPathTestCrossDependencies(MigrationTest):
         """c2branch depends on c1branch so can be taken down on its own.
         Current behaviour also takes down the dependency unnecessarily."""
         self._assert_downgrade(
-            "c2branch@{}".format(self.b.revision),
+            f"c2branch@{self.b.revision}",
             (self.d1.revision, self.d2.revision),
             [
                 self.down_(self.d2),
                 self.down_(self.c2),
             ],
-            set([self.d1.revision]),
+            {self.d1.revision},
         )
 
     def test_downgrade_branch_dependency(self):
         """c2branch depends on c1branch so taking down c1branch requires taking
         down both"""
-        destination = "c1branch@{}".format(self.b.revision)
+        destination = f"c1branch@{self.b.revision}"
         source = self.d1.revision, self.d2.revision
         revs = self.env._downgrade_revs(destination, source)
         # Drops c1, d1 as requested, also drops d2 due to dependence on d1.
@@ -1483,4 +1522,4 @@ class BranchedPathTestCrossDependencies(MigrationTest):
         head = HeadMaintainer(mock.Mock(), heads)
         for rev in revs:
             head.update_to_step(rev)
-        eq_(head.heads, set([self.c2.revision]))
+        eq_(head.heads, {self.c2.revision})

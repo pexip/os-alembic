@@ -65,7 +65,7 @@ class EXT_ARRAY(sqla_types.TypeEngine):
         if isinstance(item_type, type):
             item_type = item_type()
         self.item_type = item_type
-        super(EXT_ARRAY, self).__init__()
+        super().__init__()
 
 
 class FOOBARTYPE(sqla_types.TypeEngine):
@@ -94,16 +94,13 @@ class ExternalDialectRenderTest(TestBase):
 
         eq_(
             self.autogen_context.imports,
-            set(
-                [
-                    "from tests.test_external_dialect "
-                    "import custom_dialect_types"
-                ]
-            ),
+            {
+                "from tests.test_external_dialect "
+                "import custom_dialect_types"
+            },
         )
 
     def test_external_nested_render_sqla_type(self):
-
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
                 EXT_ARRAY(sqla_types.Integer), self.autogen_context
@@ -121,16 +118,13 @@ class ExternalDialectRenderTest(TestBase):
 
         eq_(
             self.autogen_context.imports,
-            set(
-                [
-                    "from tests.test_external_dialect "
-                    "import custom_dialect_types"
-                ]
-            ),
+            {
+                "from tests.test_external_dialect "
+                "import custom_dialect_types"
+            },
         )
 
     def test_external_nested_render_external_type(self):
-
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
                 EXT_ARRAY(FOOBARTYPE), self.autogen_context
@@ -141,10 +135,8 @@ class ExternalDialectRenderTest(TestBase):
 
         eq_(
             self.autogen_context.imports,
-            set(
-                [
-                    "from tests.test_external_dialect "
-                    "import custom_dialect_types"
-                ]
-            ),
+            {
+                "from tests.test_external_dialect "
+                "import custom_dialect_types"
+            },
         )

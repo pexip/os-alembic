@@ -1,4 +1,3 @@
-#!coding: utf-8
 import importlib.machinery
 import os
 import shutil
@@ -8,6 +7,8 @@ from sqlalchemy.testing import config
 from sqlalchemy.testing import provision
 
 from . import util as testing_util
+from .. import command
+from .. import script
 from .. import util
 from ..script import Script
 from ..script import ScriptDirectory
@@ -21,11 +22,8 @@ def _get_staging_directory():
 
 
 def staging_env(create=True, template="generic", sourceless=False):
-    from alembic import command, script
-
     cfg = _testing_config()
     if create:
-
         path = os.path.join(_get_staging_directory(), "scripts")
         assert not os.path.exists(path), (
             "staging directory %s already exists; poor cleanup?" % path
@@ -284,7 +282,6 @@ def write_script(
 
 
 def make_sourceless(path, style):
-
     import py_compile
 
     py_compile.compile(path)

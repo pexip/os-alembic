@@ -396,12 +396,18 @@ class MySQLOpTest(TestBase):
 
     def test_drop_fk(self):
         context = op_fixture("mysql")
+        op.drop_constraint("f1", "t1", type_="foreignkey")
+        context.assert_("ALTER TABLE t1 DROP FOREIGN KEY f1")
+
+    def test_drop_fk_legacy(self):
+        """#1245"""
+        context = op_fixture("mysql")
         op.drop_constraint("f1", "t1", "foreignkey")
         context.assert_("ALTER TABLE t1 DROP FOREIGN KEY f1")
 
     def test_drop_fk_quoted(self):
         context = op_fixture("mysql")
-        op.drop_constraint("MyFk", "MyTable", "foreignkey")
+        op.drop_constraint("MyFk", "MyTable", type_="foreignkey")
         context.assert_("ALTER TABLE `MyTable` DROP FOREIGN KEY `MyFk`")
 
     def test_drop_constraint_primary(self):
@@ -411,32 +417,32 @@ class MySQLOpTest(TestBase):
 
     def test_drop_unique(self):
         context = op_fixture("mysql")
-        op.drop_constraint("f1", "t1", "unique")
+        op.drop_constraint("f1", "t1", type_="unique")
         context.assert_("ALTER TABLE t1 DROP INDEX f1")
 
     def test_drop_unique_quoted(self):
         context = op_fixture("mysql")
-        op.drop_constraint("MyUnique", "MyTable", "unique")
+        op.drop_constraint("MyUnique", "MyTable", type_="unique")
         context.assert_("ALTER TABLE `MyTable` DROP INDEX `MyUnique`")
 
     def test_drop_check_mariadb(self):
         context = op_fixture("mariadb")
-        op.drop_constraint("f1", "t1", "check")
+        op.drop_constraint("f1", "t1", type_="check")
         context.assert_("ALTER TABLE t1 DROP CONSTRAINT f1")
 
     def test_drop_check_quoted_mariadb(self):
         context = op_fixture("mariadb")
-        op.drop_constraint("MyCheck", "MyTable", "check")
+        op.drop_constraint("MyCheck", "MyTable", type_="check")
         context.assert_("ALTER TABLE `MyTable` DROP CONSTRAINT `MyCheck`")
 
     def test_drop_check_mysql(self):
         context = op_fixture("mysql")
-        op.drop_constraint("f1", "t1", "check")
+        op.drop_constraint("f1", "t1", type_="check")
         context.assert_("ALTER TABLE t1 DROP CHECK f1")
 
     def test_drop_check_quoted_mysql(self):
         context = op_fixture("mysql")
-        op.drop_constraint("MyCheck", "MyTable", "check")
+        op.drop_constraint("MyCheck", "MyTable", type_="check")
         context.assert_("ALTER TABLE `MyTable` DROP CHECK `MyCheck`")
 
     def test_drop_unknown(self):
@@ -448,7 +454,7 @@ class MySQLOpTest(TestBase):
             op.drop_constraint,
             "f1",
             "t1",
-            "typo",
+            type_="typo",
         )
 
     def test_drop_generic_constraint(self):
@@ -627,7 +633,7 @@ class MySQLDefaultCompareTest(TestBase):
         insp = inspect(self.bind)
         cols = insp.get_columns(t1.name)
         refl = Table(t1.name, MetaData())
-        sqla_compat._reflect_table(insp, refl, None)
+        sqla_compat._reflect_table(insp, refl)
         ctx = self.autogen_context["context"]
         return ctx.impl.compare_server_default(
             refl.c[cols[0]["name"]], col, rendered, cols[0]["default"]
